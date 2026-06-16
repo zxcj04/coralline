@@ -4,8 +4,11 @@
 # Visual style is a tribute to https://github.com/romkatv/powerlevel10k
 #
 # Design goals:
-#   * One jq call, one git call — cheap enough for refreshInterval: 1
-#   * Pure bash arithmetic (no bc), works on macOS bash 3.2 and Linux
+#   * Minimal process spawning per render — helpers return via globals
+#     (printf -v) instead of $(...) subshells, so it stays cheap even under
+#     Git Bash on Windows, where fork() is emulated and expensive.
+#   * One jq call, one git call. Pure bash arithmetic (no bc).
+#   * Works on macOS bash 3.2 and Linux/Windows (Git Bash) bash 4+/5.
 #   * Everything themeable via ~/.claude/coralline.conf (sourced bash)
 #
 # Requires: jq, and a Nerd Font terminal unless VL_ASCII=1
@@ -35,10 +38,10 @@ VL_WARN_PCT=50                  # percentage thresholds for bar colors
 VL_HOT_PCT=75
 VL_ASCII=0                      # 1 = no Nerd Font glyphs (plain colored blocks)
 
-# Powerline glyphs (overridable; cleared when VL_ASCII=1)
-VL_CAP_L=$(printf '\xee\x82\xb6')   # U+E0B6 left rounded cap
-VL_CAP_R=$(printf '\xee\x82\xb4')   # U+E0B4 right rounded cap
-VL_SEP=$(printf '\xee\x82\xb0')     # U+E0B0 segment separator
+# Powerline glyphs (printf -v keeps these fork-free; cleared when VL_ASCII=1)
+printf -v VL_CAP_L '\xee\x82\xb6'   # U+E0B6 left rounded cap
+printf -v VL_CAP_R '\xee\x82\xb4'   # U+E0B4 right rounded cap
+printf -v VL_SEP   '\xee\x82\xb0'   # U+E0B0 segment separator
 
 # Default theme: claude-coral (steel blue · mauve · Claude coral)
 VL_BG_DIR="81,166,199"
@@ -76,6 +79,10 @@ if [ "$VL_STYLE" = "lean" ]; then
   VL_FG_TEXT="${VL_LEAN_FG:-}"
 fi
 
+# Current epoch, computed once. printf %(...)T is a fork-free builtin on
+# bash 4.2+ (incl. Git Bash); fall back to a single date call on macOS 3.2.
+printf -v NOW '%(%s)T' -1 2>/dev/null || NOW=$(date +%s)
+
 # ── Parse JSON (single jq call) ──────────────────────────────────────────────
 # Fields are joined with \x1f (unit separator): unlike tab, a non-whitespace
 # IFS preserves empty fields instead of collapsing consecutive delimiters.
@@ -99,7 +106,7 @@ $(printf '%s' "$input" | jq -r '[
   (.cost.total_lines_removed // 0),
   (.output_style.name // ""),
   (.cost.total_duration_ms // 0)
-] | map(tostring) | join("\u001f")' 2>/dev/null)
+] | map(tostring) | join("")' 2>/dev/null)
 JSON
 
 # ── ANSI primitives ──────────────────────────────────────────────────────────
@@ -107,80 +114,97 @@ R=$'\033[0m'
 BOLD=$'\033[1m'
 NORM=$'\033[22m'
 
-# bg/fg accept 256-color (single number) or true-color ("R,G,B");
-# an empty argument emits nothing (the text inherits the current color)
-bg() {
-  [ -n "$1" ] || return 0
-  if [ "${1#*,}" != "$1" ]; then
-    local IFS=','; set -- $1; printf '\033[48;2;%s;%s;%sm' "$1" "$2" "$3"
-  else printf '\033[48;5;%sm' "$1"; fi
-}
+# fg/bg set $_FG / $_BG to an ANSI escape (no subshell). Accept a 256-color
+# index, a "R,G,B" true-color triple, or empty (→ empty string, inherit color).
 fg() {
-  [ -n "$1" ] || return 0
+  if [ -z "$1" ]; then _FG=""; return; fi
   if [ "${1#*,}" != "$1" ]; then
-    local IFS=','; set -- $1; printf '\033[38;2;%s;%s;%sm' "$1" "$2" "$3"
-  else printf '\033[38;5;%sm' "$1"; fi
+    local IFS=','; set -- $1; printf -v _FG '\033[38;2;%s;%s;%sm' "$1" "$2" "$3"
+  else printf -v _FG '\033[38;5;%sm' "$1"; fi
+}
+bg() {
+  if [ -z "$1" ]; then _BG=""; return; fi
+  if [ "${1#*,}" != "$1" ]; then
+    local IFS=','; set -- $1; printf -v _BG '\033[48;2;%s;%s;%sm' "$1" "$2" "$3"
+  else printf -v _BG '\033[48;5;%sm' "$1"; fi
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-make_bar() {
-  local pct="${1:-0}" width="${2:-$VL_BAR_WIDTH}" bar="" i filled
+# ── Helpers (all return via a global, never via $() ) ─────────────────────────
+make_bar() {  # → _BAR ; $1=pct $2=width
+  local pct="${1:-0}" width="${2:-$VL_BAR_WIDTH}" i filled
+  _BAR=""
   filled=$(( (pct * width + 50) / 100 ))
   [ "$filled" -gt "$width" ] && filled=$width
-  for ((i=0; i<filled; i++));        do bar="${bar}${VL_BAR_FILL}";  done
-  for ((i=filled; i<width; i++));    do bar="${bar}${VL_BAR_EMPTY}"; done
-  printf '%s' "$bar"
+  for ((i=0; i<filled; i++));     do _BAR="${_BAR}${VL_BAR_FILL}";  done
+  for ((i=filled; i<width; i++)); do _BAR="${_BAR}${VL_BAR_EMPTY}"; done
 }
 
-# 1234 → 1.2k · 1234567 → 1.2M (integer math only)
+# 1234 → 1.2k · 1234567 → 1.2M (integer math only) → _TOK
 fmt_tok() {
   local n="${1:-0}"
-  case "$n" in (''|*[!0-9]*) printf '%s' "$n"; return ;; esac
-  if   [ "$n" -ge 1000000 ]; then printf '%d.%dM' $((n/1000000)) $(((n%1000000)/100000))
-  elif [ "$n" -ge 1000 ];    then printf '%d.%dk' $((n/1000))    $(((n%1000)/100))
-  else printf '%s' "$n"; fi
+  case "$n" in (''|*[!0-9]*) _TOK="$n"; return ;; esac
+  if   [ "$n" -ge 1000000 ]; then printf -v _TOK '%d.%dM' $((n/1000000)) $(((n%1000000)/100000))
+  elif [ "$n" -ge 1000 ];    then printf -v _TOK '%d.%dk' $((n/1000))    $(((n%1000)/100))
+  else _TOK="$n"; fi
 }
 
-# Accepts epoch seconds (with or without decimals) or an ISO 8601 timestamp.
+# Accepts epoch seconds (with or without decimals) or an ISO 8601 timestamp → _EP
+# Claude Code sends epoch ints, so the common path is fork-free; the ISO
+# fallback (rare) is the only place that may shell out to date.
 to_epoch() {
   local t="$1" s
   [ -z "$t" ] && return 1
   case "$t" in
     *T*)  # ISO 8601 — try GNU date, then BSD date (assume UTC if tz lost)
-      date -u -d "$t" +%s 2>/dev/null && return 0
+      _EP=$(date -u -d "$t" +%s 2>/dev/null) && return 0
       s="${t%%[.+]*}" ; s="${s%Z}"
-      date -ju -f '%Y-%m-%dT%H:%M:%S' "$s" +%s 2>/dev/null && return 0
+      _EP=$(date -ju -f '%Y-%m-%dT%H:%M:%S' "$s" +%s 2>/dev/null) && return 0
       return 1 ;;
-    *[0-9]*) printf '%s' "${t%%.*}" ;;
+    *[0-9]*) _EP="${t%%.*}" ; return 0 ;;
     *) return 1 ;;
   esac
 }
 
-fmt_countdown() {
-  local rst epoch now diff d h m
-  rst=$(to_epoch "$1") || return 0
-  now=$(date +%s)
-  diff=$(( rst - now ))
-  if [ "$diff" -le 0 ]; then printf 'now'; return; fi
+fmt_countdown() {  # → _CD ("" if no/expired input handled by caller); $1=resets_at
+  local diff d h m
+  _CD=""
+  to_epoch "$1" || return 0
+  diff=$(( _EP - NOW ))
+  if [ "$diff" -le 0 ]; then _CD="now"; return; fi
   d=$(( diff / 86400 )); h=$(( (diff % 86400) / 3600 )); m=$(( (diff % 3600) / 60 ))
-  if   [ "$d" -gt 0 ]; then printf '%dd%02dh' "$d" "$h"
-  elif [ "$h" -gt 0 ]; then printf '%dh%02dm' "$h" "$m"
-  else                      printf '%dm' "$m"; fi
+  if   [ "$d" -gt 0 ]; then printf -v _CD '%dd%02dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf -v _CD '%dh%02dm' "$h" "$m"
+  else                      printf -v _CD '%dm' "$m"; fi
 }
 
-fmt_duration() {
+fmt_duration() {  # → _DUR ; $1=ms
   local ms="${1:-0}" s h m
   s=$(( ms / 1000 )); h=$(( s / 3600 )); m=$(( (s % 3600) / 60 ))
-  if   [ "$h" -gt 0 ]; then printf '%dh%02dm' "$h" "$m"
-  elif [ "$m" -gt 0 ]; then printf '%dm' "$m"
-  else                      printf '%ds' "$s"; fi
+  if   [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm' "$h" "$m"
+  elif [ "$m" -gt 0 ]; then printf -v _DUR '%dm' "$m"
+  else                      printf -v _DUR '%ds' "$s"; fi
 }
 
-pct_fg() {
+pct_fg() {  # → _PFG (a color spec) ; $1=pct
   local pct="${1:-0}"
-  if   [ "$pct" -ge "$VL_HOT_PCT" ];  then printf '%s' "$VL_FG_HOT"
-  elif [ "$pct" -ge "$VL_WARN_PCT" ]; then printf '%s' "$VL_FG_WARN"
-  else                                     printf '%s' "$VL_FG_OK"; fi
+  if   [ "$pct" -ge "$VL_HOT_PCT" ];  then _PFG="$VL_FG_HOT"
+  elif [ "$pct" -ge "$VL_WARN_PCT" ]; then _PFG="$VL_FG_WARN"
+  else                                     _PFG="$VL_FG_OK"; fi
+}
+
+trunc() {  # → _TR ; $1 clipped to $2 visible chars, middle-truncated with … ; $2=0 → unchanged
+  local s="$1" max="${2:-0}" head tail start
+  case "$max" in (''|*[!0-9]*) max=0 ;; esac
+  if [ "$max" -le 0 ] || [ "${#s}" -le "$max" ]; then _TR="$s"; return; fi
+  if [ "$max" -lt 3 ]; then _TR="${s:0:max}"; return; fi   # no room for head+…+tail
+  # Keep head and tail so names sharing a long prefix stay distinguishable.
+  head=$(( (max - 1) / 2 )); tail=$(( max - 1 - head )); start=$(( ${#s} - tail ))
+  _TR="${s:0:head}…${s:start}"
+}
+
+now_strftime() {  # → _T ; $1=strftime fmt. Fork-free on bash 4.2+, one date call on 3.2.
+  # Force C locale so %p is AM/PM (matched/lowercased by the caller), not localized.
+  LC_ALL=C printf -v _T "%($1)T" -1 2>/dev/null || _T=$(LC_ALL=C date "+$1")
 }
 
 # ── Git state (single subprocess, parsed once, used by git/stash segments) ──
@@ -249,60 +273,61 @@ push() {
   SEG_LEN[${#SEG_LEN[@]}]="$SEG_LEN_R"
 }
 
-trunc() {  # echo $1 clipped to $2 visible chars, middle-truncated with … ; $2=0/unset → unchanged
-  local s="$1" max="${2:-0}" head tail start
-  case "$max" in (''|*[!0-9]*) max=0 ;; esac
-  if [ "$max" -le 0 ] || [ "${#s}" -le "$max" ]; then printf '%s' "$s"; return; fi
-  if [ "$max" -lt 3 ]; then printf '%s' "${s:0:max}"; return; fi   # no room for head+…+tail
-  # Keep head and tail so names sharing a long prefix stay distinguishable.
-  head=$(( (max - 1) / 2 )); tail=$(( max - 1 - head )); start=$(( ${#s} - tail ))
-  printf '%s…%s' "${s:0:head}" "${s:start}"
-}
-
 seg_project() {  # stable repo-root name (same in every worktree); hidden outside a repo
   [ -n "$GIT_ROOT" ] || return 0
-  push "$VL_BG_DIR" "${BOLD}$(fg $VL_FG_TEXT) ⬢ $(trunc "$GIT_ROOT" "$VL_NAME_MAX") ${NORM}"
+  fg "$VL_FG_TEXT"; trunc "$GIT_ROOT" "$VL_NAME_MAX"
+  push "$VL_BG_DIR" "${BOLD}${_FG} ⬢ ${_TR} ${NORM}"
 }
 
 seg_dir() {
   [ -n "$cwd" ] || return 0
-  local short="${cwd/#$HOME/~}" n
+  local short="${cwd/#$HOME/~}" n last
   local IFS='/'; set -- $short; n=$#
   if [ "$n" -gt "$VL_PATH_DEPTH" ]; then
     eval "last=\${$n}"
     short="$1/$2/…/$last"
   fi
-  push "$VL_BG_DIR" "${BOLD}$(fg $VL_FG_TEXT) ${short} ${NORM}"
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_DIR" "${BOLD}${_FG} ${short} ${NORM}"
 }
 
 seg_git() {
   [ -n "$GIT_BRANCH" ] || return 0
   local bgc="$VL_BG_GIT_OK"
   [ "$GIT_DIRTY" -eq 1 ] && bgc="$VL_BG_GIT_DIRTY"
-  push "$bgc" "${BOLD}$(fg $VL_FG_TEXT) ⎇ $(trunc "$GIT_BRANCH" "$VL_NAME_MAX")${GIT_MARKS}${GIT_AB} ${NORM}"
+  fg "$VL_FG_TEXT"; trunc "$GIT_BRANCH" "$VL_NAME_MAX"
+  push "$bgc" "${BOLD}${_FG} ⎇ ${_TR}${GIT_MARKS}${GIT_AB} ${NORM}"
 }
 
 seg_model() {
   [ -n "$model" ] || return 0
-  push "$VL_BG_MODEL" "${BOLD}$(fg $VL_FG_TEXT) ◆ ${model#Claude } ${NORM}"
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_MODEL" "${BOLD}${_FG} ◆ ${model#Claude } ${NORM}"
 }
 
 seg_ctx() {
   [ -n "$ctx_pct" ] || return 0
-  local ci bar cn
-  ci=$(printf '%.0f' "$ctx_pct" 2>/dev/null) || ci=0
-  bar=$(make_bar "$ci"); cn=$(pct_fg "$ci")
-  push "$VL_BG_CTX" "$(fg $cn) ⬡ ${bar} ${ci}% $(fg $VL_FG_DIM)↑$(fmt_tok $tok_in) ↓$(fmt_tok $tok_out) cr:$(fmt_tok $tok_cr) cw:$(fmt_tok $tok_cw) "
+  local ci fgc fgd ti to tcr tcw
+  printf -v ci '%.0f' "$ctx_pct" 2>/dev/null || ci=0
+  make_bar "$ci"; pct_fg "$ci"
+  fg "$_PFG";       fgc="$_FG"
+  fg "$VL_FG_DIM";  fgd="$_FG"
+  fmt_tok "$tok_in"; ti="$_TOK"
+  fmt_tok "$tok_out"; to="$_TOK"
+  fmt_tok "$tok_cr"; tcr="$_TOK"
+  fmt_tok "$tok_cw"; tcw="$_TOK"
+  push "$VL_BG_CTX" "${fgc} ⬡ ${_BAR} ${ci}% ${fgd}↑${ti} ↓${to} cr:${tcr} cw:${tcw} "
 }
 
 seg_limit() {  # $1=label $2=pct $3=resets_at $4=bg
   [ -n "$2" ] || return 0
-  local v bar cn cd rst=""
-  v=$(printf '%.0f' "$2" 2>/dev/null) || v=0
-  bar=$(make_bar "$v"); cn=$(pct_fg "$v")
-  cd=$(fmt_countdown "$3")
-  [ -n "$cd" ] && rst="$(fg $VL_FG_DIM)↺${cd}"
-  push "$4" "$(fg $cn) $1 ${bar} ${v}% ${rst} "
+  local v fgc rst=""
+  printf -v v '%.0f' "$2" 2>/dev/null || v=0
+  make_bar "$v"; pct_fg "$v"
+  fg "$_PFG"; fgc="$_FG"
+  fmt_countdown "$3"
+  if [ -n "$_CD" ]; then fg "$VL_FG_DIM"; rst="${_FG}↺${_CD}"; fi
+  push "$4" "${fgc} $1 ${_BAR} ${v}% ${rst} "
 }
 seg_limit5h() { seg_limit "5h" "$fh_pct" "$fh_rst" "$VL_BG_5H"; }
 seg_limit7d() { seg_limit "7d" "$wd_pct" "$wd_rst" "$VL_BG_7D"; }
@@ -310,35 +335,42 @@ seg_limit7d() { seg_limit "7d" "$wd_pct" "$wd_rst" "$VL_BG_7D"; }
 seg_cost() {
   [ -n "$cost" ] && [ "$cost" != "0" ] || return 0
   local fmt
-  fmt=$(printf "\$%.${VL_COST_DECIMALS}f" "$cost" 2>/dev/null) || fmt="\$$cost"
-  push "$VL_BG_COST" "$(fg $VL_FG_TEXT) ${fmt} "
+  printf -v fmt "\$%.${VL_COST_DECIMALS}f" "$cost" 2>/dev/null || fmt="\$$cost"
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_COST" "${_FG} ${fmt} "
 }
 
 seg_clock() {
   [ "$VL_CLOCK" = "off" ] && return 0
-  local t ap=""
   if [ "$VL_CLOCK" = "24h" ]; then
-    t=$(date '+%H:%M'); [ "$VL_CLOCK_SECONDS" = "1" ] && t=$(date '+%H:%M:%S')
+    [ "$VL_CLOCK_SECONDS" = "1" ] && now_strftime '%H:%M:%S' || now_strftime '%H:%M'
   else
-    t=$(date '+%I:%M'); [ "$VL_CLOCK_SECONDS" = "1" ] && t=$(date '+%I:%M:%S')
-    ap=" $(LC_ALL=C date '+%p' | tr '[:upper:]' '[:lower:]')"
+    [ "$VL_CLOCK_SECONDS" = "1" ] && now_strftime '%I:%M:%S %p' || now_strftime '%I:%M %p'
+    case "$_T" in *AM) _T="${_T% AM} am" ;; *PM) _T="${_T% PM} pm" ;; esac
   fi
-  push "$VL_BG_CLOCK" "$(fg $VL_FG_TEXT) ⊙ ${t}${ap} "
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_CLOCK" "${_FG} ⊙ ${_T} "
 }
 
 seg_lines() {
   [ "${lines_add:-0}" -gt 0 ] 2>/dev/null || [ "${lines_del:-0}" -gt 0 ] 2>/dev/null || return 0
-  push "$VL_BG_LINES" " $(fg $VL_FG_OK)+${lines_add} $(fg $VL_FG_HOT)-${lines_del} "
+  local fgo fgh
+  fg "$VL_FG_OK";  fgo="$_FG"
+  fg "$VL_FG_HOT"; fgh="$_FG"
+  push "$VL_BG_LINES" " ${fgo}+${lines_add} ${fgh}-${lines_del} "
 }
 
 seg_style() {
   [ -n "$out_style" ] && [ "$out_style" != "default" ] || return 0
-  push "$VL_BG_STYLE" "$(fg $VL_FG_TEXT) ✎ ${out_style} "
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_STYLE" "${_FG} ✎ ${out_style} "
 }
 
 seg_duration() {
   [ "${dur_ms:-0}" -gt 0 ] 2>/dev/null || return 0
-  push "$VL_BG_DURATION" "$(fg $VL_FG_TEXT) ⧖ $(fmt_duration $dur_ms) "
+  fmt_duration "$dur_ms"
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_DURATION" "${_FG} ⧖ ${_DUR} "
 }
 
 seg_stash() {
@@ -346,7 +378,8 @@ seg_stash() {
   local n
   n=$(git -C "$cwd" rev-list --walk-reflogs --count refs/stash 2>/dev/null) || return 0
   [ "${n:-0}" -gt 0 ] || return 0
-  push "$VL_BG_GIT_OK" "$(fg $VL_FG_TEXT) ⚑ ${n} "
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_GIT_OK" "${_FG} ⚑ ${n} "
 }
 
 # ── Render ───────────────────────────────────────────────────────────────────
@@ -359,30 +392,34 @@ build_segments() {
 }
 
 print_range() {  # render segments $1..$2 (inclusive) as one row
-  local i out next
+  local i out
   if [ "$VL_STYLE" = "lean" ]; then
     out=""
     for ((i=$1; i<=$2; i++)); do
-      out+="${R}$(fg ${SEG_BGS[$i]})${SEG_TXT[$i]}"
+      fg "${SEG_BGS[$i]}"
+      out+="${R}${_FG}${SEG_TXT[$i]}"
       [ "$i" -lt "$2" ] && out+="${R}${VL_LEAN_SEP}"
     done
     printf '%s\n' "${out}${R}"
     return 0
   fi
-  out="${R}$(fg ${SEG_BGS[$1]})${VL_CAP_L}"
+  fg "${SEG_BGS[$1]}"
+  out="${R}${_FG}${VL_CAP_L}"
   for ((i=$1; i<=$2; i++)); do
-    out+="$(bg ${SEG_BGS[$i]})${SEG_TXT[$i]}"
+    bg "${SEG_BGS[$i]}"
+    out+="${_BG}${SEG_TXT[$i]}"
     if [ "$i" -lt "$2" ]; then
-      next="${SEG_BGS[$((i+1))]}"
-      out+="$(bg $next)$(fg ${SEG_BGS[$i]})${VL_SEP}"
+      bg "${SEG_BGS[$((i+1))]}"; fg "${SEG_BGS[$i]}"
+      out+="${_BG}${_FG}${VL_SEP}"
     fi
   done
-  out+="${R}$(fg ${SEG_BGS[$2]})${VL_CAP_R}${R}"
+  fg "${SEG_BGS[$2]}"
+  out+="${R}${_FG}${VL_CAP_R}${R}"
   printf '%s\n' "$out"
 }
 
 # Terminal width for auto layout; 0 = unknown (then stay on one line).
-term_cols() {
+term_cols() {  # → _COLS
   local c=""
   if [ -n "$COLUMNS" ]; then
     c="$COLUMNS"
@@ -390,14 +427,14 @@ term_cols() {
     c=$(stty size 2>/dev/null </dev/tty) && c="${c#* }" || c=""
   fi
   case "$c" in (''|*[!0-9]*) c=0 ;; esac
-  printf '%s' "$c"
+  _COLS="$c"
 }
 
 if [ "$VL_LAYOUT" = "auto" ]; then
   build_segments "$VL_SEGMENTS"
   total=${#SEG_BGS[@]}
   [ "$total" -eq 0 ] && exit 0
-  W=$(term_cols)
+  term_cols; W="$_COLS"
   if [ "$W" -le 0 ] || [ "$VL_MAX_LINES" -le 1 ]; then
     print_range 0 $((total - 1))
     exit 0
