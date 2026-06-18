@@ -212,6 +212,60 @@ burn_sample() {  # append one 5h sample; $1=now $2=pct(raw) $3=resets_at(raw)
   printf '%s\t%s\t%s\n' "$1" "$2" "$_EP" >> "$BURN_FILE" 2>/dev/null
 }
 
+burn_eta_5h() {  # → _B5_STATE _B5_ETA _B5_RATE _B5_TTR ; trims $BURN_FILE
+  _B5_STATE="warming"; _B5_ETA="inf"; _B5_RATE="0"; _B5_TTR="0"
+  [ -f "$BURN_FILE" ] || return 0
+  local tmp="$BURN_FILE.tmp" out
+  out=$(awk -F'\t' -v now="$NOW" -v win="$CORALLINE_BURN_WINDOW" \
+            -v trim="$VL_BURN_TRIM" -v tmp="$tmp" '
+    $2 != "" {
+      e = $1 + 0
+      if (!(e in seen)) { ord[++n] = e; seen[e] = 1 }
+      pct[e] = $2 + 0; rst[e] = $3 + 0
+    }
+    END {
+      if (n == 0) { print "warming inf 0 0"; next_done = 1 }
+      if (!next_done) {
+        start = 1
+        for (i = 2; i <= n; i++)
+          if (int(pct[ord[i]]) < int(pct[ord[i-1]])) start = i
+        le = ord[n]; lp = pct[le]
+        ttr = rst[le] - now; if (ttr < 0) ttr = 0
+        cwin = now - win
+        fc_t = 0; fc_p = -1; lc_t = 0; lc_p = -1; ncross = 0; anycross = 0
+        for (i = start + 1; i <= n; i++) {
+          a = int(pct[ord[i-1]]); b = int(pct[ord[i]])
+          if (b > a) {
+            anycross = 1; ct = ord[i]
+            if (ct >= cwin && ct <= now) {
+              if (fc_p < 0) { fc_t = ct; fc_p = b }
+              lc_t = ct; lc_p = b; ncross++
+            }
+          }
+        }
+        if (ncross >= 2 && lc_t > fc_t && lc_p > fc_p) {
+          rate = (lc_p - fc_p) / (lc_t - fc_t)
+          eta = (100 - lp) / rate; if (eta < 0) eta = 0
+          printf "active %.0f %.10f %d\n", eta, rate, ttr
+        } else if (anycross && ncross == 0) {
+          print "idle inf 0 " ttr
+        } else {
+          print "warming inf 0 " ttr
+        }
+        if (n > trim) {
+          lo = n - trim + 1
+          for (i = lo; i <= n; i++)
+            printf "%d\t%s\t%d\n", ord[i], pct[ord[i]], rst[ord[i]] > tmp
+        }
+      }
+    }
+  ' "$BURN_FILE")
+  [ -f "$tmp" ] && mv "$tmp" "$BURN_FILE" 2>/dev/null
+  read -r _B5_STATE _B5_ETA _B5_RATE _B5_TTR <<EOF
+$out
+EOF
+}
+
 pct_fg() {  # → _PFG (a color spec) ; $1=pct
   local pct="${1:-0}"
   if   [ "$pct" -ge "$VL_HOT_PCT" ];  then _PFG="$VL_FG_HOT"
