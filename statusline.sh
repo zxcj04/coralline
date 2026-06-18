@@ -282,6 +282,48 @@ $(awk -v p="$wd_pct" -v r="$_EP" -v now="$NOW" 'BEGIN {
 EOF
 }
 
+burn_estimate() {  # → _BURN_STATE _BURN_LABEL _BURN_ETA _BURN_RATE _BURN_TTR
+  burn_eta_5h; burn_eta_7d
+  local f5=0 f7=0
+  [ "$_B5_ETA" != "inf" ] && f5=1
+  [ "$_B7_ETA" != "inf" ] && f7=1
+  if [ "$f5" = 1 ] && { [ "$f7" = 0 ] || [ "$_B5_ETA" -le "$_B7_ETA" ]; }; then
+    _BURN_STATE="active"; _BURN_LABEL="5h"
+    _BURN_ETA="$_B5_ETA"; _BURN_RATE="$_B5_RATE"; _BURN_TTR="$_B5_TTR"
+  elif [ "$f7" = 1 ]; then
+    _BURN_STATE="active"; _BURN_LABEL="7d"
+    _BURN_ETA="$_B7_ETA"; _BURN_RATE="$_B7_RATE"; _BURN_TTR="$_B7_TTR"
+  else
+    _BURN_ETA="inf"; _BURN_RATE="0"; _BURN_TTR="0"; _BURN_LABEL=""
+    if [ "$_B5_STATE" = "idle" ]; then _BURN_STATE="idle"; else _BURN_STATE="warming"; fi
+  fi
+}
+
+seg_burn() {
+  burn_estimate
+  local bg="${VL_BG_BURN:-$VL_BG_5H}"
+  if [ "$_BURN_STATE" != "active" ]; then
+    fg "$VL_FG_DIM"
+    if [ "$_BURN_STATE" = "idle" ]; then push "$bg" "${_FG} ${VL_BURN_GLYPH} ⇢— "
+    else                                  push "$bg" "${_FG} ${VL_BURN_GLYPH} ⇢… "; fi
+    return 0
+  fi
+  local eta="$_BURN_ETA" ttr="$_BURN_TTR" col rate=""
+  if   [ "$eta" -le "$ttr" ];               then col="$VL_FG_HOT"
+  elif [ $(( 10 * ttr )) -ge $(( 8 * eta )) ]; then col="$VL_FG_WARN"
+  else                                            col="$VL_FG_OK"; fi
+  fmt_eta "$eta"
+  if [ "$VL_BURN_SHOWRATE" = "1" ]; then
+    if [ "$_BURN_LABEL" = "5h" ]; then
+      rate=$(awk -v r="$_BURN_RATE" 'BEGIN { printf "%.1f%%/10m ", r * 600 }')
+    else
+      rate=$(awk -v r="$_BURN_RATE" 'BEGIN { printf "%.0f%%/d ", r * 86400 }')
+    fi
+  fi
+  fg "$col"
+  push "$bg" "${_FG} ${VL_BURN_GLYPH}${_BURN_LABEL} ${rate}⇢${_ETA} "
+}
+
 pct_fg() {  # → _PFG (a color spec) ; $1=pct
   local pct="${1:-0}"
   if   [ "$pct" -ge "$VL_HOT_PCT" ];  then _PFG="$VL_FG_HOT"

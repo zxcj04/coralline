@@ -91,4 +91,54 @@ eq "7d unused eta" "$_B7_ETA" "inf"
 wd_pct=""; wd_rst=""; NOW=1000000; burn_eta_7d
 eq "7d empty eta" "$_B7_ETA" "inf"
 
+eval "$(sed -n '/^fg() {/,/^}/p'            "$SCRIPT")"
+eval "$(sed -n '/^push() {/,/^}/p'          "$SCRIPT")"
+eval "$(sed -n '/^burn_estimate() {/,/^}/p' "$SCRIPT")"
+eval "$(sed -n '/^seg_burn() {/,/^}/p'      "$SCRIPT")"
+VL_BURN_GLYPH="↗"; VL_BURN_SHOWRATE=0; VL_BG_BURN=""; VL_BG_5H=237; VL_LAYOUT="fixed"
+VL_FG_OK=114; VL_FG_WARN=179; VL_FG_HOT=167; VL_FG_DIM=245
+
+# stub the two estimators so binding logic is tested in isolation
+mk5h() { _B5_STATE="$1"; _B5_ETA="$2"; _B5_RATE="$3"; _B5_TTR="$4"; }
+mk7d() {                 _B7_ETA="$1"; _B7_RATE="$2"; _B7_TTR="$3"; }
+burn_eta_5h() { mk5h "$M5S" "$M5E" "$M5R" "$M5T"; }
+burn_eta_7d() { mk7d "$M7E" "$M7R" "$M7T"; }
+
+# 5h roomy (eta 6h), 7d binding (eta 2h) → label 7d
+M5S=active M5E=21600 M5R=0 M5T=15000  M7E=7200 M7R=0 M7T=86400
+burn_estimate
+eq "binding label 7d"  "$_BURN_LABEL" "7d"
+eq "binding eta 7d"    "$_BURN_ETA"   "7200"
+
+# 5h binding (eta 1h) vs 7d (eta 10h) → label 5h
+M5S=active M5E=3600 M5R=0 M5T=9000  M7E=36000 M7R=0 M7T=200000
+burn_estimate
+eq "binding label 5h"  "$_BURN_LABEL" "5h"
+
+# 5h idle + 7d unused → idle, no label
+M5S=idle M5E=inf M5R=0 M5T=0  M7E=inf M7R=0 M7T=0
+burn_estimate
+eq "binding idle"      "$_BURN_STATE" "idle"
+eq "binding idle nolabel" "$_BURN_LABEL" ""
+
+# render: active 7d binding, eta 2h, ttr 1h → ratio ttr/eta=0.5 (<0.8) → OK colour;
+# 5h roomy (eta 6h) so 7d wins. Contains ↗7d and ⇢2h00m.
+SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
+M5S=active M5E=21600 M5R=0 M5T=15000  M7E=7200 M7R=0 M7T=3600
+seg_burn
+case "${SEG_TXT[0]}" in *"↗7d"*"⇢2h00m"*) ok "render active 7d" ;; *) bad "render active 7d" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *$'\033[38;5;114m'*) ok "render OK colour" ;; *) bad "render OK colour" "no OK fg in ${SEG_TXT[0]}" ;; esac
+
+# render: active 5h binding, eta 5m ≤ ttr 10m → you empty before reset → HOT colour
+SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
+M5S=active M5E=300 M5R=0 M5T=600  M7E=inf M7R=0 M7T=0
+seg_burn
+case "${SEG_TXT[0]}" in *$'\033[38;5;167m'*) ok "render HOT colour" ;; *) bad "render HOT colour" "no HOT fg in ${SEG_TXT[0]}" ;; esac
+
+# render: idle → dim, contains ⇢—
+SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
+M5S=idle M5E=inf M5R=0 M5T=0  M7E=inf M7R=0 M7T=0
+seg_burn
+case "${SEG_TXT[0]}" in *"⇢—"*$'\033'*|*$'\033'*"⇢—"*) ok "render idle dash" ;; *) bad "render idle dash" "got=${SEG_TXT[0]}" ;; esac
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }
