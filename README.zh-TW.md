@@ -145,7 +145,7 @@ curl -fsSL https://raw.githubusercontent.com/YOU/coralline/main/install.sh | bas
 ### 消耗率區段
 
 預設關閉。把 `burn` 加入 `VL_SEGMENTS` 即可顯示「到期倒數」—— 根據最近燒耗率推算，
-到達限額上限（5h 或 7d）還剩多久，例如 `↗5h ⇢ 1h58m`。相關鍵：`CORALLINE_BURN_WINDOW`
+到達限額上限（5h 或 7d）還剩多久，例如 `↗ 5h ⇢ 1h58m`。相關鍵：`CORALLINE_BURN_WINDOW`
 （近期斜率回溯長度，預設 600s）、`VL_BURN_GLYPH`（預設 `↗`）、`VL_BG_BURN`（預設用 5h
 的背景色）。只要 `burn` 在區段清單裡，coralline 就會寫入樣本到
 `~/.claude/coralline/burn-5h.tsv`；從清單移除後便不再寫入任何檔案。
@@ -158,7 +158,7 @@ curl -fsSL https://raw.githubusercontent.com/YOU/coralline/main/install.sh | bas
 
 標籤會告訴你目前由哪道限額綁定 —— 取 `5h`／`7d` 中最快撞到 100% 的那一個。
 `5h` 只有在你燒得夠兇、最近視窗內出現至少兩次整數 % 跨越時才會出現；在輕度或穩定的
-步調下沒有可擬合的短期斜率，於是改由 7d 推算綁定，顯示 `↗7d`。
+步調下沒有可擬合的短期斜率，於是改由 7d 推算綁定，顯示 `↗ 7d`。
 
 ### 響應式版面
 

@@ -149,7 +149,7 @@ Everything lives in `~/.claude/coralline.conf` (plain bash, sourced by the scrip
 ### Burn-rate segment
 
 Off by default. Add `burn` to `VL_SEGMENTS` to show a "range to empty" — the projected
-time until whichever rate limit (5h or 7d) binds first, e.g. `↗5h ⇢ 1h58m`. Keys:
+time until whichever rate limit (5h or 7d) binds first, e.g. `↗ 5h ⇢ 1h58m`. Keys:
 `CORALLINE_BURN_WINDOW` (recent-slope lookback, default 600s), `VL_BURN_GLYPH` (default
 `↗`), `VL_BG_BURN` (defaults to the 5h background). While `burn` is in the segment list,
 coralline writes samples to `~/.claude/coralline/burn-5h.tsv`; drop it from the list and
@@ -166,7 +166,7 @@ samples, or you've stopped burning.
 The label tells you which limit binds — whichever of `5h`/`7d` will hit 100% soonest.
 `5h` only appears once you're burning hard enough to register at least two integer-%
 steps within the recent window; at a light or steady pace there's no short-term slope to
-fit, so the 7d projection binds and you see `↗7d`.
+fit, so the 7d projection binds and you see `↗ 7d`.
 
 ### Responsive layout
 
