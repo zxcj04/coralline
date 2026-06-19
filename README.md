@@ -149,12 +149,24 @@ Everything lives in `~/.claude/coralline.conf` (plain bash, sourced by the scrip
 ### Burn-rate segment
 
 Off by default. Add `burn` to `VL_SEGMENTS` to show a "range to empty" — the projected
-time until whichever rate limit (5h or 7d) binds first, e.g. `↗5h ⇢ 1h58m`. It colours
-green/yellow/red by whether you'll hit that wall before the window resets. Keys:
+time until whichever rate limit (5h or 7d) binds first, e.g. `↗5h ⇢ 1h58m`. Keys:
 `CORALLINE_BURN_WINDOW` (recent-slope lookback, default 600s), `VL_BURN_GLYPH` (default
 `↗`), `VL_BG_BURN` (defaults to the 5h background). While `burn` is in the segment list,
 coralline writes samples to `~/.claude/coralline/burn-5h.tsv`; drop it from the list and
 nothing is written.
+
+The countdown is coloured by urgency against the window reset: red if you'd empty before
+the window resets, yellow for a close call, green once you'll comfortably reset in time.
+The number disappears — replaced by a bright-green `↗ ✓` — only when the projected
+range-to-empty is longer than the limit's whole window (5h or 7d): at that pace you
+couldn't run it dry even starting from a fresh window, so a figure like `24d15h` would
+just be noise. A dim `↗ ✓` means there's nothing to project yet: a cold start with no
+samples, or you've stopped burning.
+
+The label tells you which limit binds — whichever of `5h`/`7d` will hit 100% soonest.
+`5h` only appears once you're burning hard enough to register at least two integer-%
+steps within the recent window; at a light or steady pace there's no short-term slope to
+fit, so the 7d projection binds and you see `↗7d`.
 
 ### Responsive layout
 

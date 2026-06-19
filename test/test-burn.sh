@@ -126,37 +126,59 @@ burn_estimate
 eq "binding idle"      "$_BURN_STATE" "idle"
 eq "binding idle nolabel" "$_BURN_LABEL" ""
 
-# render: active 7d binding, eta 2h, ttr 1h → ratio ttr/eta=0.5 (<0.8) → OK colour;
-# 5h roomy (eta 6h) so 7d wins. Contains ↗7d and ⇢ 2h00m.
+# render: all-good ✓ is window-absolute — 7d binding with eta 24d15h > the 7d window
+# (you couldn't empty even a full window at this pace) → bright-green ✓, no number.
 SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
-M5S=active M5E=21600 M5R=0 M5T=15000  M7E=7200 M7R=0 M7T=3600
+M5S=active M5E=inf M5R=0 M5T=0  M7E=2127600 M7R=0 M7T=3600
 seg_burn
-case "${SEG_TXT[0]}" in *"↗ 7d"*"⇢ 2h00m"*) ok "render active 7d" ;; *) bad "render active 7d" "got=${SEG_TXT[0]}" ;; esac
-case "${SEG_TXT[0]}" in *$'\033[38;5;114m'*) ok "render OK colour" ;; *) bad "render OK colour" "no OK fg in ${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"↗ ✓"*) ok "render all-good 7d check" ;; *) bad "render all-good 7d check" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"⇢"*) bad "all-good drops countdown" "got=${SEG_TXT[0]}" ;; *) ok "all-good drops countdown" ;; esac
+case "${SEG_TXT[0]}" in *$'\033[38;5;114m'*) ok "all-good OK colour" ;; *) bad "all-good OK colour" "no OK fg in ${SEG_TXT[0]}" ;; esac
 
-# render: active 5h binding, eta 5m ≤ ttr 10m → you empty before reset → HOT colour
+# the window is per-label: 5h binding with eta 20000s (> the 5h/18000s window) → ✓ too
+SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
+M5S=active M5E=20000 M5R=0 M5T=600  M7E=inf M7R=0 M7T=0
+seg_burn
+case "${SEG_TXT[0]}" in *"↗ ✓"*) ok "render all-good 5h check" ;; *) bad "render all-good 5h check" "got=${SEG_TXT[0]}" ;; esac
+
+# regression: eta 4h50m is *under* the 5h window, so it must NOT collapse to ✓ — it
+# shows the number, coloured green here (comfortable vs reset: eta 17400 > 1.25·ttr 7200).
+SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
+M5S=active M5E=17400 M5R=0 M5T=7200  M7E=inf M7R=0 M7T=0
+seg_burn
+case "${SEG_TXT[0]}" in *"↗ 5h ⇢ 4h50m"*) ok "render green number" ;; *) bad "render green number" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"✓"*) bad "under-window keeps number" "got=${SEG_TXT[0]}" ;; *) ok "under-window keeps number" ;; esac
+case "${SEG_TXT[0]}" in *$'\033[38;5;114m'*) ok "green number OK colour" ;; *) bad "green number OK colour" "no OK fg in ${SEG_TXT[0]}" ;; esac
+
+# render: active 5h binding, eta 5m ≤ ttr 10m → you empty before reset → HOT colour,
+# and the actionable countdown number is kept.
 SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
 M5S=active M5E=300 M5R=0 M5T=600  M7E=inf M7R=0 M7T=0
 seg_burn
 case "${SEG_TXT[0]}" in *$'\033[38;5;167m'*) ok "render HOT colour" ;; *) bad "render HOT colour" "no HOT fg in ${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"⇢ "*) ok "HOT keeps countdown" ;; *) bad "HOT keeps countdown" "got=${SEG_TXT[0]}" ;; esac
 
-# render: idle → dim, contains ⇢ —
+# render: idle → dim all-good ✓ (not burning), no dash placeholder
 SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
 M5S=idle M5E=inf M5R=0 M5T=0  M7E=inf M7R=0 M7T=0
 seg_burn
-case "${SEG_TXT[0]}" in *"⇢ —"*$'\033'*|*$'\033'*"⇢ —"*) ok "render idle dash" ;; *) bad "render idle dash" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"↗ ✓"*) ok "render idle check" ;; *) bad "render idle check" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *$'\033[38;5;245m'*) ok "render idle dim" ;; *) bad "render idle dim" "no DIM fg in ${SEG_TXT[0]}" ;; esac
 
-# render: active 5h binding, eta 1000s, ttr 900s → ratio 0.9 ∈ [0.8,1) → WARN colour
+# render: active 5h binding, eta 1000s, ttr 900s → ratio 0.9 ∈ [0.8,1) → WARN colour,
+# and the countdown number is kept (only the green band collapses to ✓).
 SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
 M5S=active M5E=1000 M5R=0 M5T=900  M7E=inf M7R=0 M7T=0
 seg_burn
 case "${SEG_TXT[0]}" in *$'\033[38;5;179m'*) ok "render WARN colour" ;; *) bad "render WARN colour" "no WARN fg in ${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"⇢ "*) ok "WARN keeps countdown" ;; *) bad "WARN keeps countdown" "got=${SEG_TXT[0]}" ;; esac
 
-# render: warming state → dim, contains ⇢ …
+# render: warming (cold start, no data) → dim all-good ✓, no … placeholder
 SEG_BGS=(); SEG_TXT=(); SEG_LEN=()
 M5S=warming M5E=inf M5R=0 M5T=0  M7E=inf M7R=0 M7T=0
 seg_burn
-case "${SEG_TXT[0]}" in *"⇢ …"*$'\033'*|*$'\033'*"⇢ …"*) ok "render warming" ;; *) bad "render warming" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *"↗ ✓"*) ok "render warming check" ;; *) bad "render warming check" "got=${SEG_TXT[0]}" ;; esac
+case "${SEG_TXT[0]}" in *$'\033[38;5;245m'*) ok "render warming dim" ;; *) bad "render warming dim" "no DIM fg in ${SEG_TXT[0]}" ;; esac
 
 # tie-break: equal ETAs (5000s) → 5h wins via -le comparison
 M5S=active M5E=5000 M5R=0 M5T=9000  M7E=5000 M7R=0 M7T=9000

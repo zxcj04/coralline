@@ -310,13 +310,23 @@ seg_burn() {
   [ -n "$fh_pct" ] || [ -n "$wd_pct" ] || return 0
   burn_estimate
   local bg="${VL_BG_BURN:-$VL_BG_5H}"
+  # Warming (no data yet) and idle (stopped burning) both have nothing to
+  # project — show a dim all-good ✓ rather than a placeholder.
   if [ "$_BURN_STATE" != "active" ]; then
     fg "$VL_FG_DIM"
-    if [ "$_BURN_STATE" = "idle" ]; then push "$bg" "${_FG} ${VL_BURN_GLYPH} ⇢ — "
-    else                                  push "$bg" "${_FG} ${VL_BURN_GLYPH} ⇢ … "; fi
+    push "$bg" "${_FG} ${VL_BURN_GLYPH} ✓ "
     return 0
   fi
-  local eta="$_BURN_ETA" ttr="$_BURN_TTR" col
+  local eta="$_BURN_ETA" ttr="$_BURN_TTR" col win
+  # All good: the projected empty is longer than the limit's whole window, so at
+  # this pace you couldn't run it dry even from a fresh window — show ✓, not a
+  # meaningless multi-day countdown. The window is per-limit (5h vs 7d).
+  case "$_BURN_LABEL" in 5h) win=18000 ;; *) win=604800 ;; esac
+  if [ "$eta" -gt "$win" ]; then
+    fg "$VL_FG_OK"
+    push "$bg" "${_FG} ${VL_BURN_GLYPH} ✓ "
+    return 0
+  fi
   if   [ "$eta" -le "$ttr" ];               then col="$VL_FG_HOT"
   elif [ $(( 10 * ttr )) -ge $(( 8 * eta )) ]; then col="$VL_FG_WARN"
   else                                            col="$VL_FG_OK"; fi
