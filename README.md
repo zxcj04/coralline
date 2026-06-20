@@ -64,6 +64,10 @@ Run the installer in your terminal:
 curl -fsSL https://raw.githubusercontent.com/Nanako0129/coralline/main/install.sh | bash
 ```
 
+When run interactively it asks which version to install — the latest tagged release
+(recommended) or `main` (latest development). To skip the prompt, pin one explicitly with
+`--ref`, e.g. `... | bash -s -- --ref v0.6.0` or `--ref main`.
+
 ### Manual
 
 ```bash

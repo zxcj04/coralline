@@ -62,6 +62,9 @@ Claude 會先讀 playbook，再用同一支 installer bootstrap runtime、訪談
 curl -fsSL https://raw.githubusercontent.com/Nanako0129/coralline/main/install.sh | bash
 ```
 
+互動執行時會詢問要裝哪個版本 —— 最新的 release tag（建議）或 `main`（最新開發版）。
+想略過詢問就用 `--ref` 直接指定，例如 `... | bash -s -- --ref v0.6.0` 或 `--ref main`。
+
 ### 手動安裝
 
 ```bash

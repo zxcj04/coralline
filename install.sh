@@ -9,6 +9,11 @@ set -u
 REPO="${CORALLINE_REPO:-Nanako0129/coralline}"
 REF="${CORALLINE_REF:-main}"
 BASE_URL="${CORALLINE_BASE_URL:-}"
+# Tracks whether the ref/source was pinned explicitly (env or flag). When it is,
+# we never prompt or auto-resolve — the caller's choice wins.
+REF_SET=0
+[ -n "${CORALLINE_REF:-}" ] && REF_SET=1
+[ -n "${CORALLINE_BASE_URL:-}" ] && REF_SET=1
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)
 WORK_DIR=""
 TEMP_DIR=""
@@ -41,9 +46,12 @@ Usage:
   bash install.sh [--repo owner/repo] [--ref branch-or-tag]
   curl -fsSL https://raw.githubusercontent.com/Nanako0129/coralline/main/install.sh | bash
 
+Run interactively (without --ref), it asks whether to install the latest tagged
+release or main. Pin one with --ref to skip the prompt.
+
 Options:
   --repo owner/repo   Download runtime files from this GitHub repo.
-  --ref ref          Download runtime files from this branch, tag, or commit.
+  --ref ref          Download from this branch, tag, or commit (skips the version prompt).
   --base-url url     Download runtime files from this raw file base URL.
   --install-only     Install runtime files and Claude settings, then exit.
   --default          Install the default coralline config without opening the setup menu.
@@ -127,6 +135,38 @@ THEMES
   [ "$count" -gt 0 ] || die "no themes found"
 }
 
+# Best-effort lookup of the newest published release tag (e.g. v0.6.0). Prints
+# the tag, or nothing on any failure (no releases, offline, API rate limit) so
+# callers can fall back to main. Uses the curl+jq the installer already requires.
+resolve_latest_tag() {
+  command -v curl >/dev/null 2>&1 || return 0
+  curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+    | jq -r '.tag_name // empty' 2>/dev/null
+}
+
+# Ask which version to install when running interactively. Skipped when the ref
+# is pinned (--ref / env / --base-url), in the no-menu modes, when there is no
+# tty, or when no release tag can be resolved — each of those keeps the current
+# default (main), so automation and forks are unaffected.
+maybe_pick_ref() {
+  [ "$REF_SET" = 1 ] && return 0
+  case "$CONFIGURE_MODE" in --default|--import-p10k) return 0 ;; esac
+  [ -r /dev/tty ] && [ -t 1 ] || return 0
+  local latest
+  latest=$(resolve_latest_tag)
+  [ -n "$latest" ] || return 0
+  printf '\n%sInstall which version?%s\n' "$BOLD" "$RESET"
+  printf '  1) %s%s%s  %s(latest release, recommended)%s\n' "$BOLD" "$latest" "$RESET" "$DIM" "$RESET"
+  printf '  2) main  %s(latest development)%s\n' "$DIM" "$RESET"
+  printf 'Choice [1]: '
+  local ans=""
+  read -r ans < /dev/tty || ans=""
+  case "$ans" in
+    2|main|M|m) REF="main" ;;
+    *) REF="$latest" ;;
+  esac
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repo)
@@ -141,19 +181,23 @@ while [ "$#" -gt 0 ]; do
     --ref)
       [ "$#" -ge 2 ] || die "--ref requires a branch, tag, or commit"
       REF="$2"
+      REF_SET=1
       shift 2
       ;;
     --ref=*)
       REF="${1#--ref=}"
+      REF_SET=1
       shift
       ;;
     --base-url)
       [ "$#" -ge 2 ] || die "--base-url requires a URL"
       BASE_URL="$2"
+      REF_SET=1
       shift 2
       ;;
     --base-url=*)
       BASE_URL="${1#--base-url=}"
+      REF_SET=1
       shift
       ;;
     --install-only)
@@ -182,8 +226,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ -n "$BASE_URL" ] || BASE_URL="https://raw.githubusercontent.com/$REPO/$REF"
-
 cleanup() {
   [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR"
 }
@@ -201,10 +243,12 @@ if [ -f "$SCRIPT_DIR/configure.sh" ] \
   printf '%s\n' "${DIM}Using local checkout: $WORK_DIR${RESET}"
 else
   need_cmd curl
+  maybe_pick_ref
+  [ -n "$BASE_URL" ] || BASE_URL="https://raw.githubusercontent.com/$REPO/$REF"
   TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/coralline-install.XXXXXX") || exit 1
   WORK_DIR="$TEMP_DIR"
   mkdir -p "$WORK_DIR/themes" "$WORK_DIR/test"
-  printf '%s\n' "${DIM}Downloading runtime files from $BASE_URL${RESET}"
+  printf '%s\n' "${DIM}Downloading runtime files ($REF) from $BASE_URL${RESET}"
   download "$BASE_URL/configure.sh" "$WORK_DIR/configure.sh"
   download "$BASE_URL/statusline.sh" "$WORK_DIR/statusline.sh"
   download "$BASE_URL/test/sample-input.json" "$WORK_DIR/test/sample-input.json"
