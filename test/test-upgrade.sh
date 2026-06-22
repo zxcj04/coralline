@@ -71,4 +71,29 @@ eval "$(sed -n '/^knob_desc() {/,/^}/p'    "$CONF")"
 [ "$(knob_desc "$tmp/new.sh" VL_LIMIT_SYNC)" = "Cross-session limit sync (opt-in)" ] \
   && check "knob_desc reads first sentence of block (VL_LIMIT_SYNC)" 1 || check "knob_desc reads first sentence of block (VL_LIMIT_SYNC)" 0
 
+# ---- Section C: report_upgrade_delta -------------------------------------
+eval "$(sed -n '/^report_upgrade_delta() {/,/^}/p' "$CONF")"
+
+rep=$(report_upgrade_delta "$tmp/old.sh" "$tmp/new.sh" "/home/u/.claude/coralline/statusline.sh.bak.20260622-100501")
+printf '%s\n' "$rep" | grep -q 'new since your installed copy' && check "report has header" 1 || check "report has header" 0
+printf '%s\n' "$rep" | grep -qE 'segment +burn'                 && check "report lists burn segment" 1 || check "report lists burn segment" 0
+printf '%s\n' "$rep" | grep -qE 'option +VL_FLOAT=1'            && check "report lists VL_FLOAT=1" 1 || check "report lists VL_FLOAT=1" 0
+printf '%s\n' "$rep" | grep -q 'also write a plain-text readout' && check "report shows knob desc" 1 || check "report shows knob desc" 0
+printf '%s\n' "$rep" | grep -q 'backup at /home/u/.claude/coralline/statusline.sh.bak.20260622-100501' && check "report names backup path" 1 || check "report names backup path" 0
+printf '%s\n' "$rep" | grep -qE 'option +VL_BG_BURN' && check "report omits filtered color knob" 0 || check "report omits filtered color knob" 1
+
+# No backup path → no backup line, but still a report.
+rep2=$(report_upgrade_delta "$tmp/old.sh" "$tmp/new.sh" "")
+printf '%s\n' "$rep2" | grep -q 'backup at' && check "no backup line when path empty" 0 || check "no backup line when path empty" 1
+
+# Identical files → no delta → silent.
+[ -z "$(report_upgrade_delta "$tmp/new.sh" "$tmp/new.sh" "")" ] && check "silent when no new segments/knobs" 1 || check "silent when no new segments/knobs" 0
+# Missing old file → silent.
+[ -z "$(report_upgrade_delta "$tmp/nope.sh" "$tmp/new.sh" "")" ] && check "silent when old file absent" 1 || check "silent when old file absent" 0
+
+# No ANSI escapes when stdout is not a tty, even with real color vars set.
+rep3=$(T_BOLD=$'\033[1m' T_RESET=$'\033[0m' T_CORAL=$'\033[38;5;173m' T_DIM=$'\033[2m' \
+       report_upgrade_delta "$tmp/old.sh" "$tmp/new.sh" "")
+case "$rep3" in *$'\033'*) check "no ANSI when piped (non-tty)" 0 ;; *) check "no ANSI when piped (non-tty)" 1 ;; esac
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

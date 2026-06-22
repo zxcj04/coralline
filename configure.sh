@@ -198,6 +198,42 @@ knob_desc() {  # $1=statusline file $2=knob name
   printf '%s\n' "${first%%. *}"
 }
 
+# Print a "new since your installed copy" report when the new statusline adds
+# segments or opt-in knobs the old one lacked. Silent on fresh install or no
+# delta. Reports only — never writes config. Emits color only on a tty so the
+# piped/agent path gets clean, parseable text.
+report_upgrade_delta() {  # $1=old statusline $2=new statusline $3=backup path (may be empty)
+  local old="$1" new="$2" bak="${3:-}"
+  [ -f "$old" ] && [ -f "$new" ] || return 0
+  local cb="" cr="" cc="" cd=""
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    cb="${T_BOLD:-}"; cr="${T_RESET:-}"; cc="${T_CORAL:-}"; cd="${T_DIM:-}"
+  fi
+  local IFS=' '
+  local old_segs new_segs old_knobs new_knobs s k d seglist="" knoblist=""
+  old_segs=" $(segment_names "$old") " ; new_segs=" $(segment_names "$new") "
+  for s in $new_segs; do
+    case "$old_segs" in *" $s "*) : ;; *) seglist="${seglist}${seglist:+ }$s" ;; esac
+  done
+  old_knobs=" $(knob_names "$old") " ; new_knobs=" $(knob_names "$new") "
+  for k in $new_knobs; do
+    case "$old_knobs" in *" $k "*) : ;; *) knoblist="${knoblist}${knoblist:+ }$k" ;; esac
+  done
+  [ -n "$seglist" ] || [ -n "$knoblist" ] || return 0
+  printf '\n%scoralline upgrade — new since your installed copy:%s\n' "$cb" "$cr"
+  for s in $seglist; do
+    d=$(segment_desc "$new" "$s")
+    printf '  segment  %s%-16s%s %s\n' "$cc" "$s" "$cr" "$d"
+  done
+  for k in $knoblist; do
+    d=$(knob_desc "$new" "$k")
+    printf '  option   %s%-16s%s %s\n' "$cc" "${k}=1" "$cr" "$d"
+  done
+  printf '%s~/.claude/coralline.conf preserved%s' "$cd" "$cr"
+  [ -n "$bak" ] && printf '%s · backup at %s%s' "$cd" "$bak" "$cr"
+  printf '\n%senable: rerun configure.sh, or let Claude wire them in (see UPGRADE.md)%s\n' "$cd" "$cr"
+}
+
 segment_total() {
   set -- $SEGMENT_CHOICES
   printf '%s\n' "$#"
