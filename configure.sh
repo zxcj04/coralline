@@ -129,6 +129,8 @@ theme_count() {
 
 # Derive the segment menu from the runtime's seg_* functions so a new segment in
 # statusline.sh shows up here automatically — mirrors the theme auto-scan above.
+# NOTE: segment_names() below mirrors this seg_* discovery pattern for the upgrade
+# report; keep the two in sync if the discovery regex changes.
 load_segment_choices() {
   local statusline discovered s ordered=""
   statusline=$(runtime_statusline)
