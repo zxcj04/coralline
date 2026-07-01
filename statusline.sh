@@ -90,6 +90,12 @@ VL_BG_LINES=240
 VL_BG_STYLE=96
 VL_BG_DURATION=60
 VL_BG_EFFORT=141
+VL_BG_NODE=99                   # optional `node` segment background (purple)
+VL_BG_PYTHON=178                # optional `python` segment background (yellow/gold)
+printf -v VL_NODE_GLYPH '\xee\x9c\x98'   # U+E718 Nerd Font node glyph (word in VL_ASCII)
+printf -v VL_PY_GLYPH   '\xee\x9c\xbc'   # U+E73C Nerd Font python glyph (word in VL_ASCII)
+VL_RUNTIME_PROBE=0              # node/python: 1 = also detect via `node`/`python3`
+                               # on PATH when no pin file (forks per render; off by default)
 
 VL_FG_TEXT=231
 VL_FG_DIM=245
@@ -104,6 +110,7 @@ VL_CONF="${CORALLINE_CONFIG:-$HOME/.claude/coralline.conf}"
 if [ "$VL_ASCII" = "1" ]; then
   VL_CAP_L="" ; VL_CAP_R="" ; VL_SEP=""
   VL_BAR_FILL="#" ; VL_BAR_EMPTY="-"
+  VL_NODE_GLYPH="node" ; VL_PY_GLYPH="py"
 fi
 
 # Lean style: no backgrounds or caps; each segment's VL_BG_* becomes its text
@@ -754,6 +761,76 @@ seg_stash() {  # git stash count
   [ "${n:-0}" -gt 0 ] || return 0
   fg "$VL_FG_TEXT"
   push "${VL_BG_STASH:-$VL_BG_GIT_OK}" "${_FG} ⚑ ${n} "
+}
+
+# ── Runtime detection (node / python segments) ───────────────────────────────
+# Each sets the global _RT to a label for directory $1 (empty when nothing is
+# detected), so the seg_* callers read a global instead of a $() subshell — the
+# fork-free convention used by fg/_FG, trunc/_TR, seg_len/SEG_LEN_R.
+#
+# The pin-file path (.nvmrc / .python-version, walking up ancestors) is always
+# tried first and never forks. The interpreter probe DOES fork, so it is gated
+# behind VL_RUNTIME_PROBE, off by default (set it to 1 to detect e.g. nvm's
+# active version in a repo with no pin file).
+#
+# Notes: `read` returns non-zero at EOF on a newline-less pin file, but $v IS
+# set — so pre-clear and ignore read's status rather than `|| v=""`, which would
+# discard the value. `[ -f ]` (not `[ -r ]`) so a directory named .nvmrc does
+# not match and make `read` emit "Is a directory". The walk uses `case */*` to
+# step up, since ${dir%/*} is a no-op once no slash is left and would otherwise
+# spin forever on a relative/slash-less argument.
+runtime_node() {  # -> _RT: active Node version label for directory $1
+  local dir="$1" f v
+  _RT=""
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    for f in .nvmrc .node-version; do
+      if [ -f "$dir/$f" ]; then
+        v=""; IFS= read -r v < "$dir/$f"
+        v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+        [ -n "$v" ] && { _RT="${v#v}"; return 0; }   # normalize v20.x -> 20.x
+      fi
+    done
+    case "$dir" in */*) dir="${dir%/*}" ;; *) break ;; esac
+  done
+  if [ "${VL_RUNTIME_PROBE:-0}" = "1" ] && command -v node >/dev/null 2>&1; then
+    v=$(node --version 2>/dev/null) && [ -n "$v" ] && _RT="${v#v}"
+  fi
+}
+
+runtime_python() {  # -> _RT: active Python env/version label for directory $1
+  local dir="$1" v
+  _RT=""
+  [ -n "${VIRTUAL_ENV:-}" ] && { _RT="${VIRTUAL_ENV##*/}"; return 0; }
+  # conda auto-activates `base` for most users, so it is not a meaningful "env".
+  [ -n "${CONDA_DEFAULT_ENV:-}" ] && [ "$CONDA_DEFAULT_ENV" != base ] \
+    && { _RT="$CONDA_DEFAULT_ENV"; return 0; }
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -f "$dir/.python-version" ]; then
+      v=""; IFS= read -r v < "$dir/.python-version"
+      v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+      [ -n "$v" ] && { _RT="$v"; return 0; }
+    fi
+    case "$dir" in */*) dir="${dir%/*}" ;; *) break ;; esac
+  done
+  if [ "${VL_RUNTIME_PROBE:-0}" = "1" ] && command -v python3 >/dev/null 2>&1; then
+    v=$(python3 --version 2>&1); v="${v#Python }"   # some builds print to stderr
+    v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+    [ -n "$v" ] && _RT="$v"
+  fi
+}
+
+seg_node() {  # active Node version (.nvmrc/.node-version/nvm); silent when none
+  [ -n "$cwd" ] || return 0
+  runtime_node "$cwd"; [ -n "$_RT" ] || return 0
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_NODE" "${_FG} ${VL_NODE_GLYPH} ${_RT} "
+}
+
+seg_python() {  # active Python env (venv/conda/pyenv); silent when none detected
+  [ -n "$cwd" ] || return 0
+  runtime_python "$cwd"; [ -n "$_RT" ] || return 0
+  fg "$VL_FG_TEXT"
+  push "$VL_BG_PYTHON" "${_FG} ${VL_PY_GLYPH} ${_RT} "
 }
 
 # ── Render ───────────────────────────────────────────────────────────────────

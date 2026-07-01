@@ -19,6 +19,8 @@
 | `dir` | 目前目錄，過長路徑摺疊為 `~/a/…/z` |
 | `project` | repo 名稱（`⬢`），在所有 worktree 都相同；非 git repo 時隱藏 |
 | `git` | 分支、已暫存 `+` / 已修改 `!` / 未追蹤 `?`、領先 `⇡` 落後 `⇣` |
+| `node` | 目前 Node 版本（Nerd Font `nf-dev-nodejs_small`），來自 `.nvmrc` / `.node-version`（或以 `VL_RUNTIME_PROBE=1` 讀取 `PATH` 上的 `node`）；偵測不到時隱藏；需手動開啟 |
+| `python` | 目前 Python 環境（Nerd Font `nf-dev-python`）—— `$VIRTUAL_ENV` / conda（略過 `base`）/ `.python-version`（或以 `VL_RUNTIME_PROBE=1` 讀取 `PATH` 上的 `python3`）；偵測不到時隱藏；需手動開啟 |
 | `model` | 目前使用的 Claude 模型 |
 | `effort` | 推理強度（`ψ`）—— `low` / `med` / `high` / `xhigh` / `max` |
 | `ctx` | context window 量表、輸入/輸出/快取 token 數 |
@@ -168,6 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/YOU/coralline/main/install.sh | bas
 | `VL_COST_DECIMALS` | `2` | 費用顯示的小數位數 |
 | `VL_WARN_PCT` / `VL_HOT_PCT` | `50` / `75` | 量表變色門檻 |
 | `VL_ASCII` | `0` | 設為 `1` 停用 Nerd Font 字符 |
+| `VL_RUNTIME_PROBE` | `0` | `node` / `python`：設為 `1` 時，若無 pin 檔則改用 `PATH` 上的 `node` / `python3` 偵測（每次繪製會 fork） |
 | `VL_BG_*` / `VL_FG_*` | 依主題 | 顏色——256 色編號或 `"R,G,B"` |
 
 ### 消耗率區段

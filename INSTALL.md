@@ -141,10 +141,14 @@ Ask concise questions. If the user says "you decide", choose the defaults.
    `best-themes/github-dark`.
 2. **Style**: `pill` default, or `lean`.
 3. **Segments**: default is `dir git model ctx limit5h limit7d cost clock`.
-   Optional extras: `project`, `effort`, `burn`, `lines`, `style`, `duration`, `stash`.
+   Optional extras: `project`, `node`, `python`, `effort`, `burn`, `lines`, `style`,
+   `duration`, `stash`. `node` shows the active Node version (`.nvmrc` / `.node-version`,
+   else `node` on `PATH`) and `python` the active env (`$VIRTUAL_ENV` / conda /
+   `.python-version`, else `python3`); each stays hidden until something is detected.
    Write the chosen segments to `VL_SEGMENTS` in this canonical order (keep only the
-   ones the user wants): `dir project git model effort ctx limit5h limit7d burn lines
-   cost style duration stash clock`. So opting in `effort` lands it right after `model`.
+   ones the user wants): `dir project git node python model effort ctx limit5h limit7d
+   burn lines cost style duration stash clock`. So opting in `effort` lands it right
+   after `model`.
    `burn` (projected time until a rate limit binds) writes a small sample file to
    `~/.claude/coralline/burn-5h.tsv` while it is in the list, and nothing when it is not.
 4. **Layout**: responsive default (`VL_LAYOUT="auto"`, `VL_MAX_LINES=3`), single line,
@@ -169,6 +173,8 @@ when present:
 | `POWERLEVEL9K_VCS_CLEAN_*` | `VL_BG_GIT_OK` |
 | `POWERLEVEL9K_VCS_MODIFIED_*` / `_UNTRACKED_*` | `VL_BG_GIT_DIRTY` |
 | `POWERLEVEL9K_TIME_*` | `VL_BG_CLOCK` |
+| `node_version` / `nvm` in prompt elements | add `node` to `VL_SEGMENTS` |
+| `virtualenv` / `pyenv` / `anaconda` in prompt elements | add `python` to `VL_SEGMENTS` |
 
 ## Write Config
 

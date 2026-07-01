@@ -19,6 +19,8 @@
 | `dir` | current directory, long paths collapsed to `~/a/…/z` |
 | `project` | repo name (`⬢`), stable across every worktree; hidden outside a git repo |
 | `git` | branch, staged `+` / modified `!` / untracked `?`, ahead `⇡` behind `⇣` |
+| `node` | active Node version (Nerd Font `nf-dev-nodejs_small`) from `.nvmrc` / `.node-version` (or `node` on `PATH` with `VL_RUNTIME_PROBE=1`); hidden when undetected; opt-in |
+| `python` | active Python env (Nerd Font `nf-dev-python`) — `$VIRTUAL_ENV` / conda (skips `base`) / `.python-version` (or `python3` on `PATH` with `VL_RUNTIME_PROBE=1`); hidden when undetected; opt-in |
 | `model` | active Claude model |
 | `effort` | reasoning effort level (`ψ`) — `low` / `med` / `high` / `xhigh` / `max` |
 | `ctx` | context-window gauge, input/output/cache token counts |
@@ -176,6 +178,7 @@ Everything lives in `~/.claude/coralline.conf` (plain bash, sourced by the scrip
 | `VL_COST_DECIMALS` | `2` | decimal places for the cost segment |
 | `VL_WARN_PCT` / `VL_HOT_PCT` | `50` / `75` | gauge color thresholds |
 | `VL_ASCII` | `0` | `1` disables Nerd Font glyphs |
+| `VL_RUNTIME_PROBE` | `0` | `node` / `python`: `1` = also detect via `node` / `python3` on `PATH` when no pin file (forks per render) |
 | `VL_BG_*` / `VL_FG_*` | theme | colors — `256`-color index or `"R,G,B"` |
 
 ### Burn-rate segment
