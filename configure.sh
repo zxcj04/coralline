@@ -604,6 +604,12 @@ render_preview() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/coralline-config.XXXXXX") || exit 1
   input=$(prepare_preview_input)
   write_candidate_config "$tmp"
+  # Preview only: the node/python segments detect from the cwd (the coralline
+  # clone, which has no version pins), so with the shipped VL_RUNTIME_PROBE=0
+  # they self-suppress and adding them shows no change. Enable the probe just for
+  # the preview so they render the real interpreter version; the saved config is
+  # untouched and keeps the fork-free default.
+  printf 'VL_RUNTIME_PROBE=1\n' >> "$tmp"
   cache=$(preview_cache_path "$tmp" "$cols")
   printf '\nPreview (%s cols):\n' "$cols"
   if [ ! -f "$cache" ]; then
