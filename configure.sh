@@ -750,23 +750,30 @@ choose_theme_screen() {
   done
 }
 
+style_from_index() {  # index → style name (0 pill · 1 lean · 2 classic)
+  case "$1" in 2) printf classic ;; 1) printf lean ;; *) printf pill ;; esac
+}
+
 choose_style_screen() {
   local selected key pointer mark
-  [ "$style" = "lean" ] && selected=1 || selected=0
+  case "$style" in classic) selected=2 ;; lean) selected=1 ;; *) selected=0 ;; esac
   while :; do
-    [ "$selected" = "1" ] && style="lean" || style="pill"
+    style=$(style_from_index "$selected")
     draw_screen_header "Style" 120
     [ "$selected" = "0" ] && mark="✓" || mark=" "
     [ "$selected" = "0" ] && draw_option 1 "$mark" "pill" || draw_option 0 "$mark" "pill"
     [ "$selected" = "1" ] && mark="✓" || mark=" "
     [ "$selected" = "1" ] && draw_option 1 "$mark" "lean" || draw_option 0 "$mark" "lean"
+    [ "$selected" = "2" ] && mark="✓" || mark=" "
+    [ "$selected" = "2" ] && draw_option 1 "$mark" "classic (p10k dark bar)" || draw_option 0 "$mark" "classic (p10k dark bar)"
     draw_screen_footer
     clear_tail
     read_key || return 1; key="$KEY"
     case "$key" in
-      up|down) selected=$(menu_move "$selected" "$key" 2) ;;
+      up|down) selected=$(menu_move "$selected" "$key" 3) ;;
       enter)
-        [ "$selected" = "1" ] && style="lean" || style="pill"
+        style=$(style_from_index "$selected")
+        # Only lean carries a user-visible separator; pill and classic clear it.
         if [ "$style" = "lean" ]; then
           leave_screen
           lean_sep=$(ask "Lean separator, empty is okay" "$lean_sep")
@@ -1002,11 +1009,13 @@ choose_style() {
     printf '\nPick a style.\n'
     printf '  1) [%s] pill\n' "$(check_mark "$style" "pill")"
     printf '  2) [%s] lean\n' "$(check_mark "$style" "lean")"
-    answer=$(ask "Style number, Enter to keep" "$([ "$style" = "lean" ] && printf 2 || printf 1)")
+    printf '  3) [%s] classic (p10k dark bar)\n' "$(check_mark "$style" "classic")"
+    answer=$(ask "Style number, Enter to keep" "$(case "$style" in classic) printf 3 ;; lean) printf 2 ;; *) printf 1 ;; esac)")
     case "$answer" in
       1) style="pill"; lean_sep=""; show_step "Style selected" 120; return 0 ;;
       2) style="lean"; lean_sep=$(ask "Lean separator, empty is okay" "$lean_sep"); show_step "Style selected" 120; return 0 ;;
-      *) printf 'Choose 1 or 2.\n' >&2 ;;
+      3) style="classic"; lean_sep=""; show_step "Style selected" 120; return 0 ;;
+      *) printf 'Choose 1, 2, or 3.\n' >&2 ;;
     esac
   done
 }

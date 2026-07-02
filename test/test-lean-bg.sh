@@ -78,4 +78,33 @@ case "$out_nocapl" in (*$''*) check "no leading cap without VL_LEAN_BG" 0 ;;
                       (*)               check "no leading cap without VL_LEAN_BG" 1 ;; esac
 VL_LEAN_CAP_L=""
 
+# (9) Classic fold: VL_STYLE=classic is resolved at config-load time to lean plus a
+#     default dark bar and an end cap. The fold is an inline block (not a function),
+#     so extract it the same way and eval it against controlled inputs (VL_SEP is
+#     stubbed so the cap default is checkable without a Nerd Font glyph).
+FOLD=$(sed -n '/^if \[ "$VL_STYLE" = "classic" \]; then/,/^fi/p' "$SCRIPT")
+# Guard against a silent reformat making the anchor extract nothing → the eval
+# below would be a no-op and the cases could pass vacuously.
+[ -n "$FOLD" ] && check "classic fold block extracted (non-vacuous)" 1 || check "classic fold block extracted (non-vacuous)" 0
+
+VL_SEP="SEP"
+VL_STYLE="classic" ; VL_LEAN_BG="" ; VL_LEAN_CAP_R="" ; VL_BG_BAR=""
+eval "$FOLD"
+{ [ "$VL_STYLE" = "lean" ] && [ "$VL_LEAN_BG" = "238" ] && [ "$VL_LEAN_CAP_R" = "SEP" ]; } \
+  && check "classic fold -> lean + default bar 238 + cap from VL_SEP" 1 \
+  || check "classic fold -> lean + default bar 238 + cap from VL_SEP (style=$VL_STYLE bg=$VL_LEAN_BG cap=$VL_LEAN_CAP_R)" 0
+
+# (10) VL_BG_BAR tunes the bar colour when no explicit VL_LEAN_BG is set.
+VL_STYLE="classic" ; VL_LEAN_BG="" ; VL_LEAN_CAP_R="" ; VL_BG_BAR="60,60,60"
+eval "$FOLD"
+[ "$VL_LEAN_BG" = "60,60,60" ] && check "classic fold -> VL_BG_BAR sets the bar" 1 \
+                               || check "classic fold -> VL_BG_BAR sets the bar (got $VL_LEAN_BG)" 0
+
+# (11) An explicit VL_LEAN_BG / VL_LEAN_CAP_R still wins over the fold defaults.
+VL_STYLE="classic" ; VL_LEAN_BG="1,2,3" ; VL_LEAN_CAP_R="X" ; VL_BG_BAR="60,60,60"
+eval "$FOLD"
+{ [ "$VL_LEAN_BG" = "1,2,3" ] && [ "$VL_LEAN_CAP_R" = "X" ]; } \
+  && check "classic fold -> explicit VL_LEAN_BG / cap override defaults" 1 \
+  || check "classic fold -> explicit overrides win (bg=$VL_LEAN_BG cap=$VL_LEAN_CAP_R)" 0
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi
