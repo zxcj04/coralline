@@ -242,7 +242,7 @@ narrow window:  ~/dev/app  ⎇ main  ◆ Fable 5
 | `VL_LEAN_SEP` | （空） | 區段之間的額外分隔字串，例如 `·` |
 | `VL_LEAN_FG` | （空） | 強制指定文字色；留空 = 繼承各區段的強調色 |
 | `VL_LEAN_BG` | （空） | 在整列後面鋪一層統一背景——`"R,G,B"` 或 256 色碼。想要完整的 p10k *classic* 外觀，建議直接用下方的 `VL_STYLE="classic"` preset，它會幫你接好這個 |
-| `VL_LEAN_CAP_R` | （空） | 收尾字元，用 `VL_LEAN_BG` 的顏色畫出,把橫條尾端斜切收進終端(p10k 的尾端分隔,例如 `$''`);需搭配 `VL_LEAN_BG` |
+| `VL_LEAN_CAP_R` | （空） | 收尾字元，用 `VL_LEAN_BG` 的顏色畫出，把橫條尾端斜切收進終端（p10k 的尾端分隔，例如 `$''`）；需搭配 `VL_LEAN_BG` |
 | `VL_LEAN_CAP_L` | （空） | 起始截角字元——`VL_LEAN_CAP_R` 在 bar 開頭的左向鏡像（例如 `$''`）；需搭配 `VL_LEAN_BG`。stock p10k *classic* 左端保持平的 |
 
 > **提示：** 本來就是 p10k 使用者？跟 AI 安裝員或視覺化 wizard 說要匯入
