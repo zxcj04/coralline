@@ -58,6 +58,9 @@ Claude will read the playbook, use the same installer to bootstrap the runtime, 
 about the look, write the config, verify it, and remind you that you can rerun the visual
 wizard if the first result doesn't match your taste.
 
+If your Claude flags the playbook and wants to inspect things first, that is the right
+instinct, not an obstacle: see [Trust and security](#trust-and-security).
+
 ### Install it yourself
 
 Run the installer in your terminal:
@@ -124,6 +127,41 @@ something new shipped:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Nanako0129/coralline/main/install.sh | bash -s -- --install-only
 ```
+
+## Trust and security
+
+The Ask-Claude install is a remote document that instructs an AI to run `curl | bash` and
+touch `~/.claude/settings.json`. That shape is exactly what a prompt-injection attack looks
+like, so a Claude that red-flags it before proceeding is behaving correctly. The answer to
+that skepticism is inspection, not trust:
+
+- **Read what runs.** Everything is in this repo: [install.sh](./install.sh) (about 270
+  lines) copies files and merges one `statusLine` key into `settings.json`, and
+  [INSTALL.md](./INSTALL.md) is the playbook the AI follows. Have your Claude read both
+  before approving anything; that is the intended flow.
+- **Pin a release.** `... | bash -s -- --ref v0.6.0` installs a tagged release instead of
+  `main`, so what you audited is what you run. The interactive installer already offers the
+  latest tag by default.
+- **What gets written, exactly:** files under `~/.claude/coralline/`, your choices in
+  `~/.claude/coralline.conf`, and one `statusLine` entry merged into
+  `~/.claude/settings.json` (a timestamped `settings.json.bak.*` backup is created first).
+  Nothing else.
+- **What runs afterwards:** `statusline.sh` renders on every prompt. It is pure bash and
+  makes zero network requests at runtime; the only external commands are one `jq` call and
+  one `git` call per render. Your prompts, keys, and usage data never leave the machine.
+- **Why INSTALL.md addresses the AI:** humans get the visual wizard, AIs get an interview
+  script, so the playbook speaks to the reader that executes it. A document that opens by
+  addressing your AI deserves scrutiny, which is why every artifact it references lives in
+  this repo where both of you can read it first.
+
+### Uninstall
+
+```bash
+rm -rf ~/.claude/coralline ~/.claude/coralline.conf
+```
+
+Then delete the `statusLine` block from `~/.claude/settings.json` (or restore the newest
+`settings.json.bak.*`). Nothing else is left behind.
 
 ## Setup
 
