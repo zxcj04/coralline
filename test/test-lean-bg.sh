@@ -16,6 +16,7 @@ BGSEQ=$'\033[48;2;48;48;48m'   # what bg "48,48,48" emits
 eval "$(sed -n '/^fg() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^bg() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^print_range() {/,/^}/p' "$SCRIPT")"
+eval "$(sed -n '/^render_range() {/,/^}/p' "$SCRIPT")"
 
 R=$'\033[0m' ; VL_NOCOLOR=0 ; VL_STYLE="lean" ; VL_LEAN_SEP="╱"
 SEG_BGS=("0,135,175" "175,95,215" "95,135,135")   # 3 segments

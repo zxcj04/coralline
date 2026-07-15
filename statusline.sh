@@ -905,7 +905,7 @@ build_segments() {
   done
 }
 
-print_range() {  # render segments $1..$2 (inclusive) as one row
+render_range() {  # → _ROW ; assemble segments $1..$2 (inclusive) as one row
   local i out lbg=""
   if [ "$VL_STYLE" = "lean" ]; then
     # VL_LEAN_BG paints one uniform background behind the row; re-assert it after
@@ -927,7 +927,7 @@ print_range() {  # render segments $1..$2 (inclusive) as one row
     if [ -n "$lbg" ] && [ -n "${VL_LEAN_CAP_R:-}" ]; then
       fg "$VL_LEAN_BG"; out+="${R}${_FG}${VL_LEAN_CAP_R}"
     fi
-    printf '%s\n' "${out}${R}"
+    _ROW="${out}${R}"
     return 0
   fi
   fg "${SEG_BGS[$1]}"
@@ -942,7 +942,12 @@ print_range() {  # render segments $1..$2 (inclusive) as one row
   done
   fg "${SEG_BGS[$2]}"
   out+="${R}${_FG}${VL_CAP_R}${R}"
-  printf '%s\n' "$out"
+  _ROW="$out"
+}
+
+print_range() {  # render segments $1..$2 (inclusive) as one row
+  render_range "$1" "$2"
+  printf '%s\n' "$_ROW"
 }
 
 # Terminal width for auto layout; 0 = unknown (then stay on one line).
