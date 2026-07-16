@@ -10,7 +10,7 @@ Usage:
     python3 tools/render-screenshots.py
 
 Deps: pillow, fonttools, and a "MesloLG* Nerd Font Mono" installed.
-Outputs: assets/hero.png and assets/theme-<name>.png
+Outputs: assets/hero.png, assets/theme-<name>.png, and feature demos.
 """
 
 import glob
@@ -283,6 +283,36 @@ def run_bar(theme, segments, payload_json, extra_conf="", cols=None, env_extra=N
     return [parse_ansi(l) for l in out.stdout.splitlines() if l.strip()]
 
 
+def run_subagents(theme, tasks):
+    """Run the real subagent renderer. tasks: list of (agentType, payload task)."""
+    conf = FAKE_HOME / "subagent-render.conf"
+    conf.write_text(
+        f'. {REPO}/themes/{theme}.conf\n'
+        'VL_SUB_SEGMENTS="name model ctx elapsed"\n'
+    )
+    transcript = FAKE_HOME / "subagent-demo.jsonl"
+    sidecars = transcript.with_suffix("") / "subagents"
+    shutil.rmtree(sidecars.parent, ignore_errors=True)
+    sidecars.mkdir(parents=True)
+    payload_tasks = []
+    for agent_type, task in tasks:
+        payload_tasks.append(task)
+        if agent_type:
+            (sidecars / f"agent-{task['id']}.meta.json").write_text(
+                json.dumps({"agentType": agent_type,
+                            "description": task.get("label", "demo")},
+                           separators=(",", ":"))
+            )
+    data = json.dumps({"transcript_path": str(transcript), "columns": 120,
+                       "tasks": payload_tasks})
+    env = dict(os.environ, HOME=str(FAKE_HOME), CORALLINE_CONFIG=str(conf))
+    out = subprocess.run(["bash", str(REPO / "statusline.sh"), "--subagent"],
+                         input=data, env=env, check=True,
+                         capture_output=True, text=True)
+    return [parse_ansi(json.loads(line)["content"])
+            for line in out.stdout.splitlines() if line.strip()]
+
+
 # ── Authoring custom statusline demos ─────────────────────────────────────────
 # The whole tool is built from three reusable primitives, so a new demo is just
 # a *_blocks() function plus one line in main():
@@ -372,6 +402,30 @@ def burn_blocks():
             "burn", None, 31, 10800, wd_pct=None)),
     ]
 
+# ── Subagent panel scene ─────────────────────────────────────────────────────
+def subagent_blocks():
+    now = int(time.time())
+    active = [
+        ("scout", {"id": "scout-1", "type": "local_agent",
+                   "label": "Explore config sources", "status": "running",
+                   "startTime": (now - 120) * 1000, "model": "gpt-5.6-luna",
+                   "contextWindowSize": 200000, "tokenCount": 42000}),
+        ("executor", {"id": "executor-1", "type": "local_agent",
+                      "label": "Apply R2 fixes", "status": "running",
+                      "startTime": (now - 45) * 1000, "model": "claude-fable-5",
+                      "contextWindowSize": 200000, "tokenCount": 155000}),
+    ]
+    main = run_bar("claude-coral",
+                   "dir git model effort ctx limit5h limit7d cost clock", MID,
+                   'VL_LAYOUT="auto"\nVL_MAX_LINES=1\n', cols=180)
+    prompt = [parse_ansi("❯ Fix PR #44 and verify subagent rendering")]
+    return [
+        ("main session", main),
+        ("prompt", prompt),
+        ("subagent panel", run_subagents("claude-coral", active)),
+    ]
+
+
 # ── Scenes ───────────────────────────────────────────────────────────────────
 def theme_blocks(theme):
     return [
@@ -428,6 +482,11 @@ def main():
         render_image("coralline · burn-rate segment", burn_blocks(),
                      ASSETS / "burn-segment.png")
     if only == "burn":
+        return
+    if only in (None, "subagent"):
+        render_image("coralline · live session", subagent_blocks(),
+                     ASSETS / "subagent-panel.png")
+    if only == "subagent":
         return
     render_image("coralline — pick your vibe", hero_blocks(), ASSETS / "hero.png")
     render_image("coralline · lean style", lean_blocks(), ASSETS / "style-lean.png")
