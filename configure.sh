@@ -1533,6 +1533,9 @@ load_theme_choices
 main_menu
 write_final_config || exit 0
 verify_render
-offer_subagent_rows
+case "$setup_mode" in
+  default|import-p10k) ;;  # no-menu modes require explicit --subagent-rows=on|off
+  *) offer_subagent_rows ;;
+esac
 printf '\n%sDone.%s Restart Claude Code or open a new session to see coralline.\n' "$T_GREEN" "$T_RESET"
 printf '%sReconfigure anytime with:%s\n  %sbash %s/configure.sh%s\n' "$T_DIM" "$T_RESET" "$T_CORAL" "$TARGET_DIR" "$T_RESET"

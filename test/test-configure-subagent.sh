@@ -128,6 +128,17 @@ CLAUDE_SETTINGS="$SETTINGS_FILE" bash "$CONF" --subagent-rows=off >/dev/null 2>&
 jq -e 'has("subagentStatusLine") | not' "$SETTINGS_FILE" >/dev/null 2>&1 \
   && ok "--subagent-rows=off removes" || bad "--subagent-rows=off removes"
 
+# (4c) explicit no-menu setup modes must not ask the closing wizard question
+DEFAULTD="$TMPD/default-mode"; mkdir -p "$DEFAULTD/home"
+DEFOUT=$(HOME="$DEFAULTD/home" CORALLINE_CONFIG="$DEFAULTD/coralline.conf" \
+  CLAUDE_SETTINGS="$DEFAULTD/settings.json" bash "$CONF" --default </dev/null 2>&1)
+DEFRC=$?
+[ "$DEFRC" = 0 ] && ok "--default exits successfully" || bad "--default exits: rc=$DEFRC"
+case "$DEFOUT" in
+  (*"Render subagent panel rows"*) bad "--default prompted for subagent rows" ;;
+  (*) ok "--default skips subagent prompt" ;;
+esac
+
 # (5) the wizard's preview render shows every segment, including elapsed
 installed=0
 runtime_statusline() { printf '%s\n' "$HERE/../statusline.sh"; }
