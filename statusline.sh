@@ -13,6 +13,12 @@
 #
 # Requires: jq, and a Nerd Font terminal unless VL_ASCII=1
 
+# --subagent: speak Claude Code's subagentStatusLine protocol instead — one
+# {"id","content"} JSON line per agent-panel row (see the branch after the
+# render helpers). Everything else (config, theme, helpers) is shared.
+SUBAGENT_MODE=0
+[ "${1:-}" = "--subagent" ] && SUBAGENT_MODE=1
+
 # -d '' reads until NUL (i.e. all of stdin, like cat) without forking.
 # -t 5 prevents zombie bash on MSYS2 where pipe EOF may never arrive.
 read -t 5 -r -d '' input || true
@@ -53,6 +59,13 @@ VL_FLOAT_SEGMENTS="model ctx cost"  # segments rendered into the float line (pla
 VL_FLOAT_SEP="  ·  "            # separator between float segments (plain text, no color)
 VL_FLOAT_FILE="$HOME/.claude/coralline/float.txt"
 VL_NOCOLOR=0                    # internal: fg()/bg() emit nothing when 1 (plain-text path)
+
+# ── Subagent panel rows (--subagent mode) ────────────────────────────────────
+VL_SUB_SEGMENTS="name model ctx elapsed"  # panel-row segment list (subseg_*)
+VL_BG_SUB_NAME=""               # panel-row colors; empty → fall back to the
+VL_BG_SUB_MODEL=""              #   main-bar counterparts (dir/model/ctx/duration)
+VL_BG_SUB_CTX=""
+VL_BG_SUB_ELAPSED=""
 
 # ── Burn-rate segment (range-to-empty) ───────────────────────────────────────
 # Opt in by adding `burn` to VL_SEGMENTS*; the sampler below runs only then.
@@ -153,33 +166,6 @@ fi
 # bash 4.2+ (incl. Git Bash); fall back to a single date call on macOS 3.2.
 printf -v NOW '%(%s)T' -1 2>/dev/null || NOW=$(date +%s)
 
-# ── Parse JSON (single jq call) ──────────────────────────────────────────────
-# Fields are joined with \x1f (unit separator): unlike tab, a non-whitespace
-# IFS preserves empty fields instead of collapsing consecutive delimiters.
-IFS=$'\037' read -r cwd model ctx_pct tok_in tok_out tok_cr tok_cw \
-                 fh_pct fh_rst wd_pct wd_rst cost \
-                 lines_add lines_del out_style dur_ms effort <<JSON
-$(printf '%s' "$input" | jq -r '[
-  (.workspace.current_dir // .cwd // ""),
-  (.model.display_name // ""),
-  (.context_window.used_percentage // "" | tostring),
-  (.context_window.total_input_tokens // 0),
-  (.context_window.total_output_tokens // 0),
-  (.context_window.current_usage.cache_read_input_tokens // 0),
-  (.context_window.current_usage.cache_creation_input_tokens // 0),
-  (.rate_limits.five_hour.used_percentage // "" | tostring),
-  (.rate_limits.five_hour.resets_at // "" | tostring),
-  (.rate_limits.seven_day.used_percentage // "" | tostring),
-  (.rate_limits.seven_day.resets_at // "" | tostring),
-  (.cost.total_cost_usd // "" | tostring),
-  (.cost.total_lines_added // 0),
-  (.cost.total_lines_removed // 0),
-  (.output_style.name // ""),
-  (.cost.total_duration_ms // 0),
-  (.effort.level // "")
-] | map(tostring) | join("")' 2>/dev/null)
-JSON
-
 # ── ANSI primitives ──────────────────────────────────────────────────────────
 R=$'\033[0m'
 BOLD=$'\033[1m'
@@ -206,7 +192,9 @@ bg() {
 make_bar() {  # → _BAR ; $1=pct $2=width
   local pct="${1:-0}" width="${2:-$VL_BAR_WIDTH}" i filled
   _BAR=""
+  [ "$pct" -lt 0 ] 2>/dev/null && pct=0
   filled=$(( (pct * width + 50) / 100 ))
+  [ "$filled" -lt 0 ] && filled=0
   [ "$filled" -gt "$width" ] && filled=$width
   for ((i=0; i<filled; i++));     do _BAR="${_BAR}${VL_BAR_FILL}";  done
   for ((i=filled; i<width; i++)); do _BAR="${_BAR}${VL_BAR_EMPTY}"; done
@@ -221,49 +209,49 @@ fmt_tok() {
   else _TOK="$n"; fi
 }
 
+# Canonical UTC ISO timestamp → _EP, using pure integer date math. Returns 1 for
+# every non-canonical or calendar-invalid value; callers decide whether to fall
+# back to the platform date command.
+iso_epoch() {
+  local t="$1" s tm Y Mo D H Mi S yy era yoe doy doe days dim
+  case "$t" in (*T*) ;; (*) return 1 ;; esac
+  tm="${t#*T}"
+  case "$tm" in (*[+-]*) return 1 ;; esac
+  s="${t%Z}" ; s="${s%%.*}"              # drop trailing Z and any fraction
+  case "$s" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  # Fixed offsets are safe now that the exact shape is confirmed. 10# forces
+  # base-10 so a leading zero (08, 09) is not read as octal.
+  Y=$((10#${s:0:4})); Mo=$((10#${s:5:2})); D=$((10#${s:8:2}))
+  H=$((10#${s:11:2})); Mi=$((10#${s:14:2})); S=$((10#${s:17:2}))
+  dim=31                                    # days in month, for range validation
+  case $Mo in
+    4|6|9|11) dim=30 ;;
+    2) dim=$(( (Y % 4 == 0 && (Y % 100 != 0 || Y % 400 == 0)) ? 29 : 28 )) ;;
+  esac
+  [ "$Mo" -ge 1 ] && [ "$Mo" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le "$dim" ] \
+    && [ "$H" -le 23 ] && [ "$Mi" -le 59 ] && [ "$S" -le 59 ] || return 1
+  yy=$(( Y - (Mo <= 2) ))                   # days-from-civil (Howard Hinnant), UTC
+  era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
+  yoe=$(( yy - era * 400 ))
+  doy=$(( (153 * (Mo + (Mo > 2 ? -3 : 9)) + 2) / 5 + D - 1 ))
+  doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
+  days=$(( era * 146097 + doe - 719468 ))
+  _EP=$(( days * 86400 + H * 3600 + Mi * 60 + S ))
+}
+
 # Accepts epoch seconds (with or without decimals) or an ISO 8601 timestamp → _EP.
 # Claude Code sends rate-limit resets_at as ISO UTC ("…Z"). The common shape is
-# parsed fork-free with pure integer date math (days-from-civil), so the default
-# limit5h/limit7d countdowns no longer shell out to date on every render. A
-# non-standard shape falls back to one date call. The epoch-int branch is
-# fork-free for callers that already hold epoch.
+# parsed fork-free by iso_epoch; non-standard or impossible values retain the old
+# platform-date fallback so main-statusline behavior stays byte-compatible.
 to_epoch() {
-  local t="$1" s tm Y Mo D H Mi S yy era yoe doy doe days dim
+  local t="$1" s
   [ -z "$t" ] && return 1
   case "$t" in
-    *T*)  # ISO 8601. Fast-path ONLY the canonical UTC shape
-          #   YYYY-MM-DDTHH:MM:SS  with an optional .fraction and optional Z.
-          # Anything else (a timezone offset, missing seconds, an impossible
-          # date) falls through to date so behavior matches the old path exactly.
-      tm="${t#*T}"
-      case "$tm" in
-        *[+-]*) ;;                            # tz offset present → date fallback
-        *)
-          s="${t%Z}" ; s="${s%%.*}"          # drop trailing Z and any fraction
-          case "$s" in
-            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])
-              # fixed offsets are safe now that the exact shape is confirmed.
-              # 10# forces base-10 so a leading zero (08, 09) is not read as octal.
-              Y=$((10#${s:0:4})); Mo=$((10#${s:5:2})); D=$((10#${s:8:2}))
-              H=$((10#${s:11:2})); Mi=$((10#${s:14:2})); S=$((10#${s:17:2}))
-              dim=31                          # days in month, for range validation
-              case $Mo in
-                4|6|9|11) dim=30 ;;
-                2) dim=$(( (Y % 4 == 0 && (Y % 100 != 0 || Y % 400 == 0)) ? 29 : 28 )) ;;
-              esac
-              if [ "$Mo" -ge 1 ] && [ "$Mo" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le "$dim" ] \
-                 && [ "$H" -le 23 ] && [ "$Mi" -le 59 ] && [ "$S" -le 59 ]; then
-                yy=$(( Y - (Mo <= 2) ))       # days-from-civil (Howard Hinnant), UTC
-                era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
-                yoe=$(( yy - era * 400 ))
-                doy=$(( (153 * (Mo + (Mo > 2 ? -3 : 9)) + 2) / 5 + D - 1 ))
-                doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
-                days=$(( era * 146097 + doe - 719468 ))
-                _EP=$(( days * 86400 + H * 3600 + Mi * 60 + S ))
-                return 0
-              fi ;;
-          esac ;;
-      esac
+    *T*)
+      iso_epoch "$t" && return 0
       _EP=$(date -u -d "$t" +%s 2>/dev/null) && return 0
       s="${t%%[.+]*}" ; s="${s%Z}"
       _EP=$(date -ju -f '%Y-%m-%dT%H:%M:%S' "$s" +%s 2>/dev/null) && return 0
@@ -285,10 +273,14 @@ fmt_countdown() {  # → _CD ("" if no/expired input handled by caller); $1=rese
   else                      printf -v _CD '%dm' "$m"; fi
 }
 
-fmt_duration() {  # → _DUR ; $1=ms
-  local ms="${1:-0}" s h m
-  s=$(( ms / 1000 )); h=$(( s / 3600 )); m=$(( (s % 3600) / 60 ))
-  if   [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm' "$h" "$m"
+fmt_duration() {  # → _DUR ; $1=ms $2=include seconds
+  local ms="${1:-0}" s h m sec
+  s=$(( ms / 1000 )); h=$(( s / 3600 )); m=$(( (s % 3600) / 60 )); sec=$(( s % 60 ))
+  if [ "${2:-0}" = "1" ]; then
+    if   [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm%02ds' "$h" "$m" "$sec"
+    elif [ "$m" -gt 0 ]; then printf -v _DUR '%dm%02ds' "$m" "$sec"
+    else                      printf -v _DUR '%ds' "$s"; fi
+  elif [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm' "$h" "$m"
   elif [ "$m" -gt 0 ]; then printf -v _DUR '%dm' "$m"
   else                      printf -v _DUR '%ds' "$s"; fi
 }
@@ -573,6 +565,57 @@ now_strftime() {  # → _T ; $1=strftime fmt. Fork-free on bash 4.2+, one date c
   LC_ALL=C printf -v _T "%($1)T" -1 2>/dev/null || _T=$(LC_ALL=C date "+$1")
 }
 
+# JSON-string escape for the --subagent output protocol → _JS. Pure bash so the
+# per-row loop stays fork-free. Escapes \ " and the JSON control shorthands,
+# maps ESC to \u001b (ANSI colors survive the round-trip), drops any other
+# control character. Untrusted panel fields are scrubbed at the jq extraction
+# (see the --subagent block), so the ESC mapping only sees our own codes.
+json_escape() {
+  local s="$1" out="" c i n
+  case "$s" in
+    (*[\"\\[:cntrl:]]*) ;;
+    (*) _JS="$s"; return 0 ;;
+  esac
+  n=${#s}
+  for ((i=0; i<n; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      '"')     out+='\"'      ;;
+      '\')     out+='\\'      ;;
+      $'\033') out+='\u001b'  ;;
+      $'\t')   out+='\t'      ;;
+      $'\n')   out+='\n'      ;;
+      $'\r')   out+='\r'      ;;
+      [[:cntrl:]]) ;;
+      *)       out+="$c"      ;;
+    esac
+  done
+  _JS="$out"
+}
+
+# Resolved model ID → short display name → _MS. The subagent panel's per-task
+# model is an ID (claude-haiku-4-5-20251001), not the main statusline's
+# display_name. Strip claude- and a trailing date stamp, dot the version, map
+# the known families (bash 3.2 has no ${var^}). Anything unrecognized passes
+# through verbatim — never wrong, merely verbose.
+model_short() {
+  local s="$1" fam ver
+  _MS="$1"
+  case "$s" in (claude-*) ;; (*) return 0 ;; esac
+  s="${s#claude-}"
+  case "$s" in (*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) s="${s%-*}" ;; esac
+  fam="${s%%-*}" ; ver="${s#"$fam"}" ; ver="${ver#-}"
+  case "$ver" in (''|*[!0-9-]*) return 0 ;; esac
+  case "$fam" in
+    (fable)  fam="Fable"  ;;
+    (opus)   fam="Opus"   ;;
+    (sonnet) fam="Sonnet" ;;
+    (haiku)  fam="Haiku"  ;;
+    (*) return 0 ;;
+  esac
+  _MS="$fam ${ver//-/.}"
+}
+
 # ── Git state (single subprocess, parsed once, used by git/stash segments) ──
 # All git below is read-only probing. Disable git's optional index lock so a
 # frequently-refreshed statusline never rewrites the index or contends for
@@ -623,10 +666,6 @@ GIT
   [ "${b:-0}" -gt 0 ] 2>/dev/null && GIT_AB="${GIT_AB}⇣${b}"
   [ -n "$GIT_MARKS" ] && GIT_DIRTY=1
 }
-_SEG_SCAN=" $VL_SEGMENTS $VL_SEGMENTS2 $VL_SEGMENTS3 "
-[ "$VL_FLOAT" = "1" ] && _SEG_SCAN="$_SEG_SCAN$VL_FLOAT_SEGMENTS "
-case "$_SEG_SCAN" in *" git "*|*" stash "*|*" project "*) read_git ;; esac
-
 # ── Segments ─────────────────────────────────────────────────────────────────
 # Each seg_* appends (background, text, visible width) to the segment arrays.
 ESC=$'\033'
@@ -896,6 +935,103 @@ seg_python() {  # active Python env (venv/conda/pyenv); silent when none detecte
   push "${VL_BG_PYTHON:-$VL_BG_MODEL}" "${_FG} ${VL_PY_GLYPH} ${_RT} "
 }
 
+# ── Subagent panel row segments (--subagent mode) ────────────────────────────
+# Same push() convention as seg_*; input is one task's t_* globals set by the
+# --subagent loop below the render helpers. Per-field degradation: a missing
+# field hides its segment (ctx shrinks to a bare count); the row always renders.
+
+sub_epoch() {  # → _EP ; strict startTime parser for the per-task loop.
+  # Accepts only shapes it can resolve fork-free: pure-digit epoch seconds,
+  # pure-digit epoch milliseconds (13+ digits), and canonical valid UTC ISO.
+  # Anything else hides elapsed instead of reaching to_epoch's date fallback.
+  local t="$1"
+  case "$t" in
+    ('') return 1 ;;
+    (*[!0-9]*) iso_epoch "$t" ;;
+    (*)
+      if [ "${#t}" -ge 13 ]; then _EP=$(( 10#$t / 1000 ))
+      else _EP=$(( 10#$t )); fi
+      return 0 ;;
+  esac
+}
+
+subagent_role() {  # → _SUB_ROLE ; $1=transcript path $2=task id
+  local transcript="$1" id="$2" path line role
+  _SUB_ROLE=""
+  case "$id" in (''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-]*) return 1 ;; esac
+  case "$transcript" in (*.jsonl) path="${transcript%.jsonl}/subagents/agent-${id}.meta.json" ;; (*) return 1 ;; esac
+  path="${path//\\//}"  # native Windows payload paths use backslashes; Git Bash accepts C:/...
+  [ -r "$path" ] || return 1
+  IFS= read -r line < "$path" || [ -n "$line" ] || return 1
+  case "$line" in
+    (*'"agentType":"'*) role="${line#*\"agentType\":\"}" ; role="${role%%\"*}" ;;
+    (*) return 1 ;;
+  esac
+  case "$role" in (''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-]*) return 1 ;; esac
+  _SUB_ROLE="$role"
+}
+
+subseg_name() {  # identity + task label; each falls back independently
+  local identity="${t_name:-${t_role:-}}" detail="${t_label:-${t_desc:-}}" label col
+  if [ -n "${t_name:-}" ] && [ -n "${t_role:-}" ] && [ "$t_name" != "$t_role" ]; then
+    identity="$t_name ($t_role)"
+  fi
+  if [ -n "$identity" ]; then
+    label="$identity"
+    [ -n "$detail" ] && [ "$detail" != "${t_name:-}" ] && [ "$detail" != "${t_role:-}" ] && label="$label · $detail"
+  else
+    label="${detail:-$t_type}"
+  fi
+  [ -n "$label" ] || return 0
+  case "$t_status" in
+    (running|in_progress|active) col="$VL_FG_TEXT" ;;
+    (completed|success|done)     col="$VL_FG_OK"   ;;
+    (failed|error|cancelled)     col="$VL_FG_HOT"  ;;
+    (*)                          col="$VL_FG_DIM"  ;;  # incl. missing → unknown
+  esac
+  fg "$col"; trunc "$label" "$VL_NAME_MAX"
+  push "${VL_BG_SUB_NAME:-$VL_BG_DIR}" "${BOLD}${_FG} ${_TR} ${NORM}"
+}
+
+subseg_model() {  # per-task resolved model, short-named; hidden when unresolved
+  [ -n "$t_model" ] || return 0
+  model_short "$t_model"
+  fg "$VL_FG_TEXT"
+  push "${VL_BG_SUB_MODEL:-$VL_BG_MODEL}" "${BOLD}${_FG} ◆ ${_MS} ${NORM}"
+}
+
+subseg_ctx() {  # per-task context gauge; bare token count without a window size
+  local tokint="${t_tok%%.*}" cws="$t_cws" ci fgc fgd
+  case "$tokint" in (''|*[!0-9]*) return 0 ;; esac
+  # ponytail: 16 digits keeps *100 inside signed 64-bit Bash arithmetic; use
+  # non-overflow ratio math before widening this display-only ceiling.
+  [ "${#tokint}" -le 16 ] || return 0
+  tokint=$(( 10#$tokint ))
+  fmt_tok "$tokint"
+  case "$cws" in (''|*[!0-9]*) cws=0 ;; esac
+  if [ "${#cws}" -le 16 ]; then cws=$(( 10#$cws )); else cws=0; fi
+  if [ "$cws" -gt 0 ]; then
+    ci=$(( (tokint * 100) / cws )); [ "$ci" -gt 100 ] && ci=100
+    make_bar "$ci"; pct_fg "$ci"
+    fg "$_PFG";      fgc="$_FG"
+    fg "$VL_FG_DIM"; fgd="$_FG"
+    push "${VL_BG_SUB_CTX:-$VL_BG_CTX}" "${fgc} ⬡ ${_BAR} ${ci}% ${fgd}${_TOK} "
+  else
+    fg "$VL_FG_DIM"
+    push "${VL_BG_SUB_CTX:-$VL_BG_CTX}" "${_FG} ⬡ ${_TOK} "
+  fi
+}
+
+subseg_elapsed() {  # wall-clock since startTime; hidden when unparseable
+  [ -n "$t_start" ] || return 0
+  sub_epoch "$t_start" || return 0
+  local diff=$(( NOW - _EP ))
+  [ "$diff" -ge 0 ] || return 0
+  fmt_duration $(( diff * 1000 )) 1
+  fg "$VL_FG_TEXT"
+  push "${VL_BG_SUB_ELAPSED:-$VL_BG_DURATION}" "${_FG} ⧖ ${_DUR} "
+}
+
 # ── Render ───────────────────────────────────────────────────────────────────
 build_segments() {
   local s
@@ -905,7 +1041,7 @@ build_segments() {
   done
 }
 
-print_range() {  # render segments $1..$2 (inclusive) as one row
+render_range() {  # → _ROW ; assemble segments $1..$2 (inclusive) as one row
   local i out lbg=""
   if [ "$VL_STYLE" = "lean" ]; then
     # VL_LEAN_BG paints one uniform background behind the row; re-assert it after
@@ -927,7 +1063,7 @@ print_range() {  # render segments $1..$2 (inclusive) as one row
     if [ -n "$lbg" ] && [ -n "${VL_LEAN_CAP_R:-}" ]; then
       fg "$VL_LEAN_BG"; out+="${R}${_FG}${VL_LEAN_CAP_R}"
     fi
-    printf '%s\n' "${out}${R}"
+    _ROW="${out}${R}"
     return 0
   fi
   fg "${SEG_BGS[$1]}"
@@ -942,7 +1078,12 @@ print_range() {  # render segments $1..$2 (inclusive) as one row
   done
   fg "${SEG_BGS[$2]}"
   out+="${R}${_FG}${VL_CAP_R}${R}"
-  printf '%s\n' "$out"
+  _ROW="$out"
+}
+
+print_range() {  # render segments $1..$2 (inclusive) as one row
+  render_range "$1" "$2"
+  printf '%s\n' "$_ROW"
 }
 
 # Terminal width for auto layout; 0 = unknown (then stay on one line).
@@ -956,6 +1097,102 @@ term_cols() {  # → _COLS
   case "$c" in (''|*[!0-9]*) c=0 ;; esac
   _COLS="$c"
 }
+
+# ── Subagent panel mode ──────────────────────────────────────────────────────
+# stdin: {columns, tasks:[…]} (Claude Code subagentStatusLine, v2.1.205+ for
+# model/contextWindowSize). stdout: one {"id","content"} line per row. Reuses
+# the theme and render_range, so panel rows match the main bar. jq failure or
+# an empty tasks list prints nothing → Claude Code keeps its default rows.
+# Placement matters: this branch exits before every main-bar-only side effect
+# below (git probe, burn/limit sampling, float readout — and the main JSON
+# parse), so none of them needs a mode guard.
+if [ "$SUBAGENT_MODE" = "1" ]; then
+  # Panel rows are single independent rows: SEG_LEN[] (auto-layout wrap input)
+  # is never read, so force non-auto layout — push() then skips its
+  # per-character width scan for every panel segment.
+  VL_LAYOUT=fixed
+  # scrub drops C0, DEL, and C1 control characters from every extracted field
+  # BEFORE the stream below is framed with newlines and unit separators.
+  # That one pass is both the security scrub — a crafted label could otherwise
+  # smuggle terminal escapes (ESC[2J confirmed live) into the rendered row —
+  # and the framing guard: a literal newline or 0x1f inside a field would
+  # otherwise split it into extra lines/fields, letting a task forge a whole
+  # {"id",...} row or shift every field after it. json_escape below therefore
+  # only ever sees coralline's own ANSI codes.
+  #
+  # Claude Code can deliver several concatenated {columns,tasks} documents in
+  # one read (no newlines between them; captured live). Each is a full panel
+  # snapshot, so only the newest is current: slurp the stream (-s) and render
+  # just the last document — otherwise stale rows (and duplicate ids) would
+  # precede the fresh ones.
+  SUB_LINES=$(printf '%s' "$input" | jq -rs '
+    def scrub: tostring | gsub("[\\x00-\\x1f\\x7f\u0080-\u009f]"; "");
+    (last // {}) as $d |
+    ($d.tasks[]? | [
+      "task",
+      ($d.transcript_path // ""),
+      (.id // ""),
+      (.name // ""),
+      (.label // ""),
+      (.description // ""),
+      (.type // ""),
+      (.status // ""),
+      (.startTime // ""),
+      (.model // ""),
+      (.contextWindowSize // ""),
+      (.tokenCount // "")
+    ] | map(scrub) | join("\u001f"))' 2>/dev/null)
+  while IFS=$'\037' read -r sub_kind t_transcript t_id t_name t_label t_desc t_type t_status t_start t_model t_cws t_tok; do
+    [ "$sub_kind" = "task" ] || continue
+    t_tok="${t_tok%$'\r'}"  # native Windows jq writes CRLF; input CR was scrubbed above
+    [ -n "$t_id" ] || continue
+    t_role=""
+    [ "$t_type" = "local_agent" ] && subagent_role "$t_transcript" "$t_id" && t_role="$_SUB_ROLE"
+    SEG_BGS=() ; SEG_TXT=() ; SEG_LEN=()
+    for s in $VL_SUB_SEGMENTS; do
+      command -v "subseg_$s" >/dev/null 2>&1 && "subseg_$s"
+    done
+    [ "${#SEG_BGS[@]}" -gt 0 ] || continue
+    render_range 0 $(( ${#SEG_BGS[@]} - 1 ))
+    json_escape "$_ROW" ; sub_row="$_JS"
+    json_escape "$t_id"
+    printf '{"id":"%s","content":"%s"}\n' "$_JS" "$sub_row"
+  done <<SUB
+$SUB_LINES
+SUB
+  exit 0
+fi
+
+# ── Parse JSON (single jq call) ──────────────────────────────────────────────
+# Fields are joined with \x1f (unit separator): unlike tab, a non-whitespace
+# IFS preserves empty fields instead of collapsing consecutive delimiters.
+IFS=$'\037' read -r cwd model ctx_pct tok_in tok_out tok_cr tok_cw \
+                 fh_pct fh_rst wd_pct wd_rst cost \
+                 lines_add lines_del out_style dur_ms effort <<JSON
+$(printf '%s' "$input" | jq -r '[
+  (.workspace.current_dir // .cwd // ""),
+  (.model.display_name // ""),
+  (.context_window.used_percentage // "" | tostring),
+  (.context_window.total_input_tokens // 0),
+  (.context_window.total_output_tokens // 0),
+  (.context_window.current_usage.cache_read_input_tokens // 0),
+  (.context_window.current_usage.cache_creation_input_tokens // 0),
+  (.rate_limits.five_hour.used_percentage // "" | tostring),
+  (.rate_limits.five_hour.resets_at // "" | tostring),
+  (.rate_limits.seven_day.used_percentage // "" | tostring),
+  (.rate_limits.seven_day.resets_at // "" | tostring),
+  (.cost.total_cost_usd // "" | tostring),
+  (.cost.total_lines_added // 0),
+  (.cost.total_lines_removed // 0),
+  (.output_style.name // ""),
+  (.cost.total_duration_ms // 0),
+  (.effort.level // "")
+] | map(tostring) | join("")' 2>/dev/null)
+JSON
+
+_SEG_SCAN=" $VL_SEGMENTS $VL_SEGMENTS2 $VL_SEGMENTS3 "
+[ "$VL_FLOAT" = "1" ] && _SEG_SCAN="$_SEG_SCAN$VL_FLOAT_SEGMENTS "
+case "$_SEG_SCAN" in *" git "*|*" stash "*|*" project "*) read_git ;; esac
 
 # Sample only when the burn segment is actually shown — the segment list is the
 # single source of truth, so enabling burn in configure.sh just works. _SEG_SCAN

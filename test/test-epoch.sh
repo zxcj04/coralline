@@ -12,7 +12,8 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../statusline.sh"
 
-# Pull just the to_epoch function body out of the real script and define it here.
+# Pull the shared pure-Bash ISO helper and to_epoch body out of the real script.
+eval "$(sed -n '/^iso_epoch() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^to_epoch() {/,/^}/p' "$SCRIPT")"
 
 # Reference epoch via the system date (GNU first, BSD fallback) — what the old

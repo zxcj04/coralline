@@ -1,0 +1,25 @@
+{
+  "session_id": "test-session-abc",
+  "transcript_path": "/tmp/coralline-sample/test-session-abc.jsonl",
+  "columns": 100,
+  "tasks": [
+    {
+      "id": "task-1", "type": "local_agent", "label": "Explore config sources",
+      "description": "Search the repo for where VL_* knobs are documented",
+      "status": "running", "startTime": 1752555600000,
+      "model": "claude-haiku-4-5-20251001",
+      "contextWindowSize": 200000, "tokenCount": 42000
+    },
+    {
+      "id": "task-2", "name": "big-refactor", "type": "local_agent",
+      "label": "Refactor renderer",
+      "status": "completed", "startTime": "2026-07-15T04:00:00Z",
+      "model": "claude-fable-5",
+      "contextWindowSize": 200000, "tokenCount": 155000
+    },
+    {
+      "id": "task-3", "type": "local_agent", "label": "just-spawned",
+      "status": "queued"
+    }
+  ]
+}
