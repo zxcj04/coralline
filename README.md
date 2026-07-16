@@ -42,7 +42,7 @@ defaults to `name · description · token count`. coralline can theme the
 **subagent rows** and add the per-task model, a context gauge, and elapsed time:
 
 ```text
- scout · Explore config sources ◆ gpt-5.6-luna ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
+ scout · Explore config sources ◆ gpt-5.6-luna ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m05s
  executor · Apply R2 fixes ◆ Fable 5 ⬡ ▰▰▰▰▱ 77% 155.0k ⧖ 45s
 ```
 
@@ -93,7 +93,7 @@ segments. These four are the complete set:
 | `name` | task identity plus task label: explicit `name` and sidecar `agentType` compose when both exist, followed by payload `label` or `description`; `type` is the final fallback; colored by status — running: text color, completed: ok, failed: hot, missing/unknown: dim | every source is empty or unavailable |
 | `model` | `◆` model from Claude Code's per-task payload; known Claude IDs are shortened and unknown/gateway IDs are shown verbatim | model not resolved yet, or pre-v2.1.205 |
 | `ctx` | `⬡` context gauge + token count; bare count without `contextWindowSize` | no `tokenCount` |
-| `elapsed` | `⧖` wall-clock since `startTime` (epoch s/ms or UTC ISO) | `startTime` missing or unparseable |
+| `elapsed` | `⧖` wall-clock since `startTime`, shown to the second (epoch s/ms or UTC ISO) | `startTime` missing or unparseable |
 
 The renderer shares your config file but reads only the knobs that shape a row:
 `VL_STYLE` with its per-style knobs — the pill caps and separator (`VL_CAP_L`,

@@ -13,6 +13,7 @@ eval "$(sed -n '/^make_bar() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^iso_epoch() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^json_escape() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^model_short() {/,/^}/p' "$SCRIPT")"
+eval "$(sed -n '/^fmt_duration() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^sub_epoch() {/,/^}/p' "$SCRIPT")"
 
 fail=0
@@ -51,6 +52,14 @@ ms claude-haiku-4-5-20251001      "Haiku 4.5"
 ms claude-foo-2                   "claude-foo-2"      # unknown family → raw id
 ms gpt-oss-120b                   "gpt-oss-120b"      # non-claude → raw id
 ms claude-fable-next              "claude-fable-next" # non-numeric version → raw id
+
+# ── elapsed precision ─────────────────────────────────────────────────────────
+fmt_duration 125000
+[ "$_DUR" = "2m" ] && ok "main duration keeps compact minutes" || bad "main duration: got [$_DUR]"
+fmt_duration 125000 1
+[ "$_DUR" = "2m05s" ] && ok "subagent duration keeps seconds" || bad "subagent duration: got [$_DUR]"
+fmt_duration 3723000 1
+[ "$_DUR" = "1h02m03s" ] && ok "subagent duration keeps seconds after hours" || bad "subagent hour duration: got [$_DUR]"
 
 # ── strict timestamp parsing ─────────────────────────────────────────────────
 DATE_MARK="$TMPD/date-called"

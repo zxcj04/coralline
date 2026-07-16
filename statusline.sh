@@ -273,10 +273,14 @@ fmt_countdown() {  # → _CD ("" if no/expired input handled by caller); $1=rese
   else                      printf -v _CD '%dm' "$m"; fi
 }
 
-fmt_duration() {  # → _DUR ; $1=ms
-  local ms="${1:-0}" s h m
-  s=$(( ms / 1000 )); h=$(( s / 3600 )); m=$(( (s % 3600) / 60 ))
-  if   [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm' "$h" "$m"
+fmt_duration() {  # → _DUR ; $1=ms $2=include seconds
+  local ms="${1:-0}" s h m sec
+  s=$(( ms / 1000 )); h=$(( s / 3600 )); m=$(( (s % 3600) / 60 )); sec=$(( s % 60 ))
+  if [ "${2:-0}" = "1" ]; then
+    if   [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm%02ds' "$h" "$m" "$sec"
+    elif [ "$m" -gt 0 ]; then printf -v _DUR '%dm%02ds' "$m" "$sec"
+    else                      printf -v _DUR '%ds' "$s"; fi
+  elif [ "$h" -gt 0 ]; then printf -v _DUR '%dh%02dm' "$h" "$m"
   elif [ "$m" -gt 0 ]; then printf -v _DUR '%dm' "$m"
   else                      printf -v _DUR '%ds' "$s"; fi
 }
@@ -1023,7 +1027,7 @@ subseg_elapsed() {  # wall-clock since startTime; hidden when unparseable
   sub_epoch "$t_start" || return 0
   local diff=$(( NOW - _EP ))
   [ "$diff" -ge 0 ] || return 0
-  fmt_duration $(( diff * 1000 ))
+  fmt_duration $(( diff * 1000 )) 1
   fg "$VL_FG_TEXT"
   push "${VL_BG_SUB_ELAPSED:-$VL_BG_DURATION}" "${_FG} ⧖ ${_DUR} "
 }
