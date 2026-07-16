@@ -46,7 +46,7 @@ defaults to `name · description · token count`. coralline can theme the
  executor · Apply R2 fixes ◆ Fable 5 ⬡ ▰▰▰▰▱ 77% 155.0k ⧖ 45s
 ```
 
-![A live coralline session with the main statusline, prompt, and themed subagent panel](./assets/subagent-panel.png)
+![A live Claude Code session with coralline's main statusline and themed subagent rows](./assets/subagent-panel.png)
 
 Claude Code v2.1.211 does not include its internal `agentType` role in the
 `subagentStatusLine` payload, but local Agent tasks have a small metadata
