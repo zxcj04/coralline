@@ -28,6 +28,7 @@ the `statusLine` command into `~/.claude/settings.json`.
 | `sample-input.json` | `~/.claude/coralline/sample-input.json` | Local preview and verification sample |
 | generated config | `~/.claude/coralline.conf` | User layout, segments, and theme choices |
 | `statusLine` entry | `~/.claude/settings.json` | Registers coralline in Claude Code |
+| `subagentStatusLine` entry | `~/.claude/settings.json` | Opt-in only — themed agent-panel rows, written when the user says yes (wizard question or `configure.sh --subagent-rows=on`) |
 
 ## Fast Path
 
@@ -167,6 +168,13 @@ Ask concise questions. If the user says "you decide", choose the defaults.
    mention `VL_LIMIT_SYNC=1`: it makes those segments show the freshest reading any session
    has recorded for the current window (in a `limit-5h.d` / `limit-7d.d` store). Off by
    default; it only converges sessions when they redraw and cannot refresh a fully idle one.
+6. **Subagent panel rows** (optional, needs Claude Code v2.1.205+ for the per-task
+   model/context fields): offer to render the agent panel below the prompt in the same
+   theme — see the README's "Subagent panel" section. If the user says yes, run
+   `bash ~/.claude/coralline/configure.sh --subagent-rows=on` after the bootstrap; it
+   registers `subagentStatusLine` in `~/.claude/settings.json` (with the same
+   backup-then-merge as the installer) and prints a preview. `--subagent-rows=off`
+   reverses it. Skip silently if the user's Claude Code predates the agent panel.
 
 If `~/.p10k.zsh` exists, ask whether the user wants to import its style, clock, and main
 colors. Do not import it by default. If the user agrees, read the file and map these values

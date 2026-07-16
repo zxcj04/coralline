@@ -35,6 +35,53 @@
 
 量表會隨用量變色：綠色 → 50% 轉黃 → 75% 轉紅（門檻可調）。
 
+## Subagent 面板
+
+Claude Code 在 subagent 執行時會於 prompt 下方顯示 agent 面板;每列預設是
+`name · description · token count`。coralline 可以改用你的主題渲染這些列——
+agent 名稱、**該 task 的 model**、context 用量條與執行時間:
+
+```text
+ Explore ◆ Haiku 4.5 ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
+ executor ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
+```
+
+在設定流程(`bash ~/.claude/coralline/configure.sh`)中對 *Render subagent
+panel rows* 回答 `y` 即可啟用;這會在 `~/.claude/settings.json` 註冊
+`subagentStatusLine` 指向 `statusline.sh --subagent`,之後回答 `n` 可移除。
+
+每列的 `model`/`contextWindowSize` 需要 Claude Code **v2.1.205+**;舊版(或
+task 的 model 尚未確定時)會優雅降級——缺什麼就省略什麼。per-subagent 的
+*effort* 因 Claude Code 未提供該欄位而不顯示;另外面板中的 **main(主 session)
+那一列由 Claude Code 自行繪製**,不經過 `subagentStatusLine` 協定,coralline
+無法為它套主題。
+
+`VL_SUB_SEGMENTS`(預設 `"name model ctx elapsed"`)決定列的內容與順序,可用
+的 segment 就是以下四個:
+
+| Segment | 顯示 | 隱藏條件 |
+|---|---|---|
+| `name` | task 名稱(依 `name` / `label` / `description` / `type` 優先序),顏色反映狀態——running:一般文字色、completed:ok、failed:hot、缺失/未知:dim | 四個欄位皆空 |
+| `model` | `◆` model 短名(`claude-haiku-4-5-…` → `Haiku 4.5`;不認得的 ID 原樣顯示) | model 尚未 resolve,或 v2.1.205 之前的版本 |
+| `ctx` | `⬡` context 用量條 + token 數;無 `contextWindowSize` 時只顯示 token 數 | 沒有 `tokenCount` |
+| `elapsed` | `⧖` 自 `startTime` 起的執行時間(epoch 秒/毫秒或 UTC ISO) | `startTime` 缺失或無法解析 |
+
+subagent renderer 與主列共用同一份 config,但只讀取與「單列外觀」有關的參數:
+`VL_STYLE` 及各 style 自己的參數——pill 的圓角與分隔(`VL_CAP_L`、`VL_CAP_R`、
+`VL_SEP`)、lean/classic 家族(`VL_LEAN_SEP`、`VL_LEAN_BG`、
+`VL_LEAN_CAP_L`/`VL_LEAN_CAP_R`、`VL_LEAN_FG`、`VL_BG_BAR`)——`VL_ASCII`、
+`VL_NAME_MAX`(建議設定——面板 label 通常很長,列過寬時 Claude Code 從右側裁切,
+最先消失的就是 model/ctx)、用量條參數(`VL_BAR_WIDTH`、`VL_BAR_FILL`、
+`VL_BAR_EMPTY`、`VL_WARN_PCT`、`VL_HOT_PCT`)、共用色盤(`VL_FG_TEXT`、
+`VL_FG_DIM`、`VL_FG_OK`、`VL_FG_WARN`、`VL_FG_HOT`),以及列顏色
+`VL_BG_SUB_NAME` / `VL_BG_SUB_MODEL` / `VL_BG_SUB_CTX` / `VL_BG_SUB_ELAPSED`
+(留空 = 分別退回 `VL_BG_DIR` / `VL_BG_MODEL` / `VL_BG_CTX` /
+`VL_BG_DURATION`)。其餘參數——`VL_SEGMENTS*`、版面(`VL_LAYOUT`、
+`VL_MAX_LINES`、`VL_WRAP_MARGIN`)、clock、cost、lines、float、limit-sync、
+burn、git 與 runtime segments——都只作用於主列,在 subagent 模式一律忽略。
+想讓面板列使用與主列不同的主題,把註冊的 command 指向獨立 config 即可:
+`CORALLINE_CONFIG=~/.claude/coralline-subagent.conf bash ~/.claude/coralline/statusline.sh --subagent`。
+
 ## 安裝
 
 三種安裝方式都由同一支 `install.sh` 驅動，每一種都會把 renderer **與設定 wizard** 複製到

@@ -35,6 +35,57 @@
 
 Gauges change color as they fill: green → yellow at 50% → red at 75% (thresholds configurable).
 
+## Subagent panel
+
+Claude Code shows an agent panel below the prompt while subagents run; each row
+defaults to `name · description · token count`. coralline can render those rows
+in your theme instead — agent name, **per-task model**, a context gauge, and
+elapsed time:
+
+```text
+ Explore ◆ Haiku 4.5 ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
+ executor ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
+```
+
+Opt in from the setup flow (`bash ~/.claude/coralline/configure.sh`): answer `y`
+to *Render subagent panel rows*. This registers `subagentStatusLine` in
+`~/.claude/settings.json` pointing at `statusline.sh --subagent`; answering `n`
+later removes it again.
+
+Per-task `model`/`contextWindowSize` need Claude Code **v2.1.205+**; on older
+versions (or before a task's model resolves) rows degrade gracefully — the
+missing pieces are simply omitted. Per-subagent *effort* is not shown because
+Claude Code does not expose it per task, and the panel's **main-session row is
+drawn by Claude Code itself** — it is not part of the `subagentStatusLine`
+protocol, so coralline cannot theme it.
+
+`VL_SUB_SEGMENTS` (default `"name model ctx elapsed"`) picks and orders the row
+segments. These four are the complete set:
+
+| Segment | Shows | Hidden when |
+|---|---|---|
+| `name` | task name (first of `name` / `label` / `description` / `type`), colored by status — running: text color, completed: ok, failed: hot, missing/unknown: dim | all four fields empty |
+| `model` | `◆` short model name (`claude-haiku-4-5-…` → `Haiku 4.5`; unknown IDs shown verbatim) | model not resolved yet, or pre-v2.1.205 |
+| `ctx` | `⬡` context gauge + token count; bare count without `contextWindowSize` | no `tokenCount` |
+| `elapsed` | `⧖` wall-clock since `startTime` (epoch s/ms or UTC ISO) | `startTime` missing or unparseable |
+
+The renderer shares your config file but reads only the knobs that shape a row:
+`VL_STYLE` with its per-style knobs — the pill caps and separator (`VL_CAP_L`,
+`VL_CAP_R`, `VL_SEP`) and the lean/classic family (`VL_LEAN_SEP`, `VL_LEAN_BG`,
+`VL_LEAN_CAP_L`/`VL_LEAN_CAP_R`, `VL_LEAN_FG`, `VL_BG_BAR`) — `VL_ASCII`,
+`VL_NAME_MAX` (recommended — panel labels are long, and overlong rows are
+clipped from the right, hiding model/ctx first), the gauge knobs
+(`VL_BAR_WIDTH`, `VL_BAR_FILL`, `VL_BAR_EMPTY`, `VL_WARN_PCT`, `VL_HOT_PCT`),
+the shared palette (`VL_FG_TEXT`, `VL_FG_DIM`, `VL_FG_OK`, `VL_FG_WARN`,
+`VL_FG_HOT`), and the row colors `VL_BG_SUB_NAME` / `VL_BG_SUB_MODEL` /
+`VL_BG_SUB_CTX` / `VL_BG_SUB_ELAPSED` (empty = fall back to `VL_BG_DIR` /
+`VL_BG_MODEL` / `VL_BG_CTX` / `VL_BG_DURATION`). Everything else —
+`VL_SEGMENTS*`, layout (`VL_LAYOUT`, `VL_MAX_LINES`, `VL_WRAP_MARGIN`), clock,
+cost, lines, float, limit-sync, burn, git, and the runtime segments — is
+main-bar-only and ignored here. To theme panel rows independently of the main
+bar, point the registration at its own config file:
+`CORALLINE_CONFIG=~/.claude/coralline-subagent.conf bash ~/.claude/coralline/statusline.sh --subagent`.
+
 ## Install
 
 Three ways to install, all driven by the same `install.sh`. Each one copies the renderer **and
