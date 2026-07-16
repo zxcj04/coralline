@@ -192,7 +192,9 @@ bg() {
 make_bar() {  # → _BAR ; $1=pct $2=width
   local pct="${1:-0}" width="${2:-$VL_BAR_WIDTH}" i filled
   _BAR=""
+  [ "$pct" -lt 0 ] 2>/dev/null && pct=0
   filled=$(( (pct * width + 50) / 100 ))
+  [ "$filled" -lt 0 ] && filled=0
   [ "$filled" -gt "$width" ] && filled=$width
   for ((i=0; i<filled; i++));     do _BAR="${_BAR}${VL_BAR_FILL}";  done
   for ((i=filled; i<width; i++)); do _BAR="${_BAR}${VL_BAR_EMPTY}"; done
@@ -207,52 +209,49 @@ fmt_tok() {
   else _TOK="$n"; fi
 }
 
+# Canonical UTC ISO timestamp → _EP, using pure integer date math. Returns 1 for
+# every non-canonical or calendar-invalid value; callers decide whether to fall
+# back to the platform date command.
+iso_epoch() {
+  local t="$1" s tm Y Mo D H Mi S yy era yoe doy doe days dim
+  case "$t" in (*T*) ;; (*) return 1 ;; esac
+  tm="${t#*T}"
+  case "$tm" in (*[+-]*) return 1 ;; esac
+  s="${t%Z}" ; s="${s%%.*}"              # drop trailing Z and any fraction
+  case "$s" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+    *) return 1 ;;
+  esac
+  # Fixed offsets are safe now that the exact shape is confirmed. 10# forces
+  # base-10 so a leading zero (08, 09) is not read as octal.
+  Y=$((10#${s:0:4})); Mo=$((10#${s:5:2})); D=$((10#${s:8:2}))
+  H=$((10#${s:11:2})); Mi=$((10#${s:14:2})); S=$((10#${s:17:2}))
+  dim=31                                    # days in month, for range validation
+  case $Mo in
+    4|6|9|11) dim=30 ;;
+    2) dim=$(( (Y % 4 == 0 && (Y % 100 != 0 || Y % 400 == 0)) ? 29 : 28 )) ;;
+  esac
+  [ "$Mo" -ge 1 ] && [ "$Mo" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le "$dim" ] \
+    && [ "$H" -le 23 ] && [ "$Mi" -le 59 ] && [ "$S" -le 59 ] || return 1
+  yy=$(( Y - (Mo <= 2) ))                   # days-from-civil (Howard Hinnant), UTC
+  era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
+  yoe=$(( yy - era * 400 ))
+  doy=$(( (153 * (Mo + (Mo > 2 ? -3 : 9)) + 2) / 5 + D - 1 ))
+  doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
+  days=$(( era * 146097 + doe - 719468 ))
+  _EP=$(( days * 86400 + H * 3600 + Mi * 60 + S ))
+}
+
 # Accepts epoch seconds (with or without decimals) or an ISO 8601 timestamp → _EP.
 # Claude Code sends rate-limit resets_at as ISO UTC ("…Z"). The common shape is
-# parsed fork-free with pure integer date math (days-from-civil), so the default
-# limit5h/limit7d countdowns no longer shell out to date on every render. A
-# non-standard shape falls back to one date call. The epoch-int branch is
-# fork-free for callers that already hold epoch.
+# parsed fork-free by iso_epoch; non-standard or impossible values retain the old
+# platform-date fallback so main-statusline behavior stays byte-compatible.
 to_epoch() {
-  local t="$1" s tm Y Mo D H Mi S yy era yoe doy doe days dim
+  local t="$1" s
   [ -z "$t" ] && return 1
   case "$t" in
-    *T*)  # ISO 8601. Fast-path ONLY the canonical UTC shape
-          #   YYYY-MM-DDTHH:MM:SS  with an optional .fraction and optional Z.
-          # Anything else (a timezone offset, missing seconds, an impossible
-          # date) falls through to date so behavior matches the old path exactly.
-          # NOTE: sub_epoch pre-filters with this same shape glob so the
-          # per-row panel loop never reaches the date fallback — keep the
-          # two patterns in sync when widening this fast path.
-      tm="${t#*T}"
-      case "$tm" in
-        *[+-]*) ;;                            # tz offset present → date fallback
-        *)
-          s="${t%Z}" ; s="${s%%.*}"          # drop trailing Z and any fraction
-          case "$s" in
-            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])
-              # fixed offsets are safe now that the exact shape is confirmed.
-              # 10# forces base-10 so a leading zero (08, 09) is not read as octal.
-              Y=$((10#${s:0:4})); Mo=$((10#${s:5:2})); D=$((10#${s:8:2}))
-              H=$((10#${s:11:2})); Mi=$((10#${s:14:2})); S=$((10#${s:17:2}))
-              dim=31                          # days in month, for range validation
-              case $Mo in
-                4|6|9|11) dim=30 ;;
-                2) dim=$(( (Y % 4 == 0 && (Y % 100 != 0 || Y % 400 == 0)) ? 29 : 28 )) ;;
-              esac
-              if [ "$Mo" -ge 1 ] && [ "$Mo" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le "$dim" ] \
-                 && [ "$H" -le 23 ] && [ "$Mi" -le 59 ] && [ "$S" -le 59 ]; then
-                yy=$(( Y - (Mo <= 2) ))       # days-from-civil (Howard Hinnant), UTC
-                era=$(( (yy >= 0 ? yy : yy - 399) / 400 ))
-                yoe=$(( yy - era * 400 ))
-                doy=$(( (153 * (Mo + (Mo > 2 ? -3 : 9)) + 2) / 5 + D - 1 ))
-                doe=$(( yoe * 365 + yoe / 4 - yoe / 100 + doy ))
-                days=$(( era * 146097 + doe - 719468 ))
-                _EP=$(( days * 86400 + H * 3600 + Mi * 60 + S ))
-                return 0
-              fi ;;
-          esac ;;
-      esac
+    *T*)
+      iso_epoch "$t" && return 0
       _EP=$(date -u -d "$t" +%s 2>/dev/null) && return 0
       s="${t%%[.+]*}" ; s="${s%Z}"
       _EP=$(date -ju -f '%Y-%m-%dT%H:%M:%S' "$s" +%s 2>/dev/null) && return 0
@@ -939,27 +938,12 @@ seg_python() {  # active Python env (venv/conda/pyenv); silent when none detecte
 
 sub_epoch() {  # → _EP ; strict startTime parser for the per-task loop.
   # Accepts only shapes it can resolve fork-free: pure-digit epoch seconds,
-  # pure-digit epoch milliseconds (13+ digits), and the canonical UTC ISO
-  # shape to_epoch fast-paths without forking. Anything else — tz offsets,
-  # digit-bearing garbage that to_epoch's *[0-9]* catch-all would misread —
-  # returns 1 so the elapsed segment hides instead of forking date per row
-  # or rendering a bogus duration. The ISO glob below mirrors to_epoch's
-  # fast-path shape check — keep the two in sync (see the NOTE there).
-  # (One exception: a well-shaped but
-  # calendar-impossible date, e.g. 2026-99-99T99:99:99Z, still reaches
-  # to_epoch's date fallback once before returning 1; elapsed hides correctly.)
-  local t="$1" s
+  # pure-digit epoch milliseconds (13+ digits), and canonical valid UTC ISO.
+  # Anything else hides elapsed instead of reaching to_epoch's date fallback.
+  local t="$1"
   case "$t" in
     ('') return 1 ;;
-    (*[!0-9]*)
-      s="${t#*T}"
-      case "$s" in (*[+-]*) return 1 ;; esac
-      s="${t%Z}" ; s="${s%%.*}"
-      case "$s" in
-        ([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9])
-          to_epoch "$t" ;;
-        (*) return 1 ;;
-      esac ;;
+    (*[!0-9]*) iso_epoch "$t" ;;
     (*)
       if [ "${#t}" -ge 13 ]; then _EP=$(( 10#$t / 1000 ))
       else _EP=$(( 10#$t )); fi
@@ -990,8 +974,13 @@ subseg_model() {  # per-task resolved model, short-named; hidden when unresolved
 subseg_ctx() {  # per-task context gauge; bare token count without a window size
   local tokint="${t_tok%%.*}" cws="$t_cws" ci fgc fgd
   case "$tokint" in (''|*[!0-9]*) return 0 ;; esac
+  # ponytail: 16 digits keeps *100 inside signed 64-bit Bash arithmetic; use
+  # non-overflow ratio math before widening this display-only ceiling.
+  [ "${#tokint}" -le 16 ] || return 0
+  tokint=$(( 10#$tokint ))
   fmt_tok "$tokint"
   case "$cws" in (''|*[!0-9]*) cws=0 ;; esac
+  if [ "${#cws}" -le 16 ]; then cws=$(( 10#$cws )); else cws=0; fi
   if [ "$cws" -gt 0 ]; then
     ci=$(( (tokint * 100) / cws )); [ "$ci" -gt 100 ] && ci=100
     make_bar "$ci"; pct_fg "$ci"

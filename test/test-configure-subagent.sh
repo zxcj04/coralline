@@ -34,6 +34,24 @@ jq -e '.subagentStatusLine.type == "command" and (.subagentStatusLine.command | 
   "$SETTINGS_FILE" >/dev/null && ok "enable creates entry" || bad "enable creates entry"
 subagent_enabled && ok "state reads enabled" || bad "state reads enabled"
 
+# (1b) enabled means a usable command schema, including documented custom configs
+MAIN_SETTINGS="$SETTINGS_FILE"
+SETTINGS_FILE="$TMPD/schema.json"
+printf '%s\n' '{"subagentStatusLine":{"type":"command","command":"CORALLINE_CONFIG=/tmp/sub.conf bash /tmp/statusline.sh --subagent"}}' > "$SETTINGS_FILE"
+subagent_enabled && ok "custom subagent command is enabled" || bad "custom subagent command is enabled"
+for invalid in \
+  '{"subagentStatusLine":true}' \
+  '{"subagentStatusLine":"yes"}' \
+  '{"subagentStatusLine":{}}' \
+  '{"subagentStatusLine":{"type":"prompt","command":"bash x --subagent"}}' \
+  '{"subagentStatusLine":{"type":"command","command":true}}' \
+  '{"subagentStatusLine":{"type":"command","command":"bash x"}}'
+do
+  printf '%s\n' "$invalid" > "$SETTINGS_FILE"
+  subagent_enabled && bad "invalid subagent schema rejected: $invalid" || ok "invalid subagent schema rejected"
+done
+SETTINGS_FILE="$MAIN_SETTINGS"
+
 # (2) enable/disable preserve unrelated keys and write a backup
 jq '.statusLine = {"type":"command","command":"x"} | .other = 1' "$SETTINGS_FILE" > "$TMPD/t" && mv "$TMPD/t" "$SETTINGS_FILE"
 disable_subagent_statusline >/dev/null
@@ -46,6 +64,49 @@ subagent_enabled && bad "state reads disabled" || ok "state reads disabled"
 printf '{broken' > "$SETTINGS_FILE"
 ( enable_subagent_statusline ) >/dev/null 2>&1 && bad "broken json dies" || ok "broken json dies"
 [ "$(cat "$SETTINGS_FILE")" = "{broken" ] && ok "original untouched on failure" || bad "original untouched on failure"
+
+# (3b) backup and replacement failures stop before callers can report success
+CPD="$TMPD/cp-fail"; mkdir -p "$CPD"; CPFILE="$CPD/settings.json"
+printf '{"original":1}\n' > "$CPFILE"
+CPOUT=$(
+  SETTINGS_FILE="$CPFILE"
+  cp() { printf 'partial\n' > "$2"; return 1; }
+  enable_subagent_statusline 2>&1
+  )
+CPRC=$?
+[ "$CPRC" != 0 ] && ok "backup failure exits non-zero" || bad "backup failure exits non-zero"
+[ "$(cat "$CPFILE")" = '{"original":1}' ] && ok "backup failure preserves original" || bad "backup failure preserves original"
+case "$CPOUT" in (*"Updated "*) bad "backup failure printed success" ;; (*) ok "backup failure prints no success" ;; esac
+set -- "$CPFILE".bak.*; [ ! -e "$1" ] && ok "partial backup removed" || bad "partial backup removed"
+set -- "$CPD"/.coralline-settings.*; [ ! -e "$1" ] && ok "backup failure temp removed" || bad "backup failure temp removed"
+
+MVD="$TMPD/mv-fail"; mkdir -p "$MVD"; MVFILE="$MVD/settings.json"
+printf '{"original":1}\n' > "$MVFILE"
+MVOUT=$(
+  SETTINGS_FILE="$MVFILE"
+  mv() { return 1; }
+  enable_subagent_statusline 2>&1
+  )
+MVRC=$?
+[ "$MVRC" != 0 ] && ok "replace failure exits non-zero" || bad "replace failure exits non-zero"
+[ "$(cat "$MVFILE")" = '{"original":1}' ] && ok "replace failure preserves original" || bad "replace failure preserves original"
+case "$MVOUT" in (*"Updated "*) bad "replace failure printed success" ;; (*) ok "replace failure prints no success" ;; esac
+ls "$MVFILE".bak.* >/dev/null 2>&1 && ok "replace failure keeps backup" || bad "replace failure keeps backup"
+set -- "$MVD"/.coralline-settings.*; [ ! -e "$1" ] && ok "replace failure temp removed" || bad "replace failure temp removed"
+
+# (3c) two writes in one second preserve both pre-write states
+COLLD="$TMPD/collision"; mkdir -p "$COLLD"; COLLFILE="$COLLD/settings.json"
+printf '{"step":0}\n' > "$COLLFILE"
+(
+  SETTINGS_FILE="$COLLFILE"
+  date() { printf '20260716123456\n'; }
+  settings_merge '.step = 1'
+  settings_merge '.step = 2'
+) >/dev/null
+jq -e '.step == 0' "$COLLFILE.bak.20260716123456" >/dev/null 2>&1 \
+  && ok "first same-second backup preserved" || bad "first same-second backup preserved"
+jq -e '.step == 1' "$COLLFILE.bak.20260716123456.1" >/dev/null 2>&1 \
+  && ok "second same-second backup preserved" || bad "second same-second backup preserved"
 
 # (4) one shared settings.json merge pipeline — update_settings and the subagent
 # toggle must go through the same settings_merge helper, not three hand copies

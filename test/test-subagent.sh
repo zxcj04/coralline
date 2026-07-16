@@ -6,9 +6,14 @@ set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../statusline.sh"
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/coralline-subtest.XXXXXX")
+trap 'rm -rf "$TMPD"' EXIT
 
+eval "$(sed -n '/^make_bar() {/,/^}/p' "$SCRIPT")"
+eval "$(sed -n '/^iso_epoch() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^json_escape() {/,/^}/p' "$SCRIPT")"
 eval "$(sed -n '/^model_short() {/,/^}/p' "$SCRIPT")"
+eval "$(sed -n '/^sub_epoch() {/,/^}/p' "$SCRIPT")"
 
 fail=0
 ok()   { printf 'ok    %s\n' "$1"; }
@@ -47,6 +52,23 @@ ms claude-foo-2                   "claude-foo-2"      # unknown family → raw i
 ms gpt-oss-120b                   "gpt-oss-120b"      # non-claude → raw id
 ms claude-fable-next              "claude-fable-next" # non-numeric version → raw id
 
+# ── strict timestamp parsing ─────────────────────────────────────────────────
+DATE_MARK="$TMPD/date-called"
+date() { printf 'called\n' >> "$DATE_MARK"; printf '1234567890\n'; }
+sub_epoch 2024-02-29T00:00:00Z; erc=$?
+[ "$erc" = 0 ] && [ "$_EP" = 1709164800 ] && ok "valid ISO stays fork-free" || bad "valid ISO: rc=$erc epoch=[${_EP:-}]"
+sub_epoch 2026-02-31T00:00:00Z; erc=$?
+[ "$erc" != 0 ] && ok "invalid calendar ISO rejected" || bad "invalid calendar ISO accepted: [${_EP:-}]"
+sub_epoch 2026-99-99T99:99:99Z; erc=$?
+[ "$erc" != 0 ] && ok "invalid ISO ranges rejected" || bad "invalid ISO ranges accepted: [${_EP:-}]"
+[ ! -e "$DATE_MARK" ] && ok "strict ISO path never calls date" || bad "strict ISO path called date"
+unset -f date
+
+# ── defensive gauge bounds ───────────────────────────────────────────────────
+VL_BAR_WIDTH=5; VL_BAR_FILL="▰"; VL_BAR_EMPTY="▱"
+make_bar -30
+[ "$_BAR" = "▱▱▱▱▱" ] && ok "negative pct clamps to empty bar" || bad "negative pct bar: [$_BAR]"
+
 # ── end-to-end: --subagent protocol ──────────────────────────────────────────
 SAMPLE="$HERE/sample-subagent-input.json"
 OUT=$(CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent < "$SAMPLE")
@@ -84,10 +106,49 @@ NOBAR=$(printf '{"tasks":[{"id":"x","name":"n","type":"t","tokenCount":42000}]}'
 case "$NOBAR" in (*"⬡ 42.0k"*) ok "ctx degrades to bare count" ;; (*) bad "ctx degrade: [$NOBAR]" ;; esac
 case "$NOBAR" in (*"▰"*|*"%"*) bad "ctx degrade must drop bar/% : [$NOBAR]" ;; (*) ok "no bar without window size" ;; esac
 
+# 16 digits remain arithmetic-safe; oversized fields degrade without arithmetic
+SAFE16=$(printf '{"tasks":[{"id":"x","name":"n","tokenCount":"4000000000000000","contextWindowSize":"8000000000000000"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$SAFE16" in (*"50%"*) ok "16-digit ctx remains valid" ;; (*) bad "16-digit ctx: [$SAFE16]" ;; esac
+
+LEADERR="$TMPD/leading-zero.err"
+LEAD=$(printf '{"tasks":[{"id":"x","name":"n","tokenCount":"0800000000000000","contextWindowSize":"1600000000000000"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent 2> "$LEADERR")
+printf '%s\n' "$LEAD" | jq -e '(.id == "x") and (.content | contains("50%"))' >/dev/null 2>&1 \
+  && [ ! -s "$LEADERR" ] && ok "leading-zero ctx stays decimal JSON" || bad "leading-zero ctx: [$LEAD]"
+
+BIGTOK=$(printf '{"tasks":[{"id":"x","name":"n","tokenCount":"10000000000000000","contextWindowSize":200000}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$BIGTOK" in (*"⬡"*|*"%"*) bad "17-digit token must hide ctx: [$BIGTOK]" ;; (*) ok "17-digit token hides ctx" ;; esac
+
+BIGWIN=$(printf '{"tasks":[{"id":"x","name":"n","tokenCount":42000,"contextWindowSize":"10000000000000000"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$BIGWIN" in (*"⬡ 42.0k"*) ok "oversized window degrades to bare count" ;; (*) bad "oversized window: [$BIGWIN]" ;; esac
+case "$BIGWIN" in (*"▰"*|*"%"*) bad "oversized window must drop bar/%: [$BIGWIN]" ;; (*) ok "oversized window drops bar" ;; esac
+
+# The previously confirmed overflow payload must terminate rather than making
+# make_bar count upward from a huge negative filled value.
+ADV_OUT="$TMPD/adversarial.jsonl"
+( printf '{"tasks":[{"id":"x","name":"n","tokenCount":"4601686018427387904","contextWindowSize":1}]}' \
+    | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent > "$ADV_OUT" ) & wpid=$!
+( sleep 5; kill -9 "$wpid" 2>/dev/null ) & kpid=$!
+if wait "$wpid" 2>/dev/null; then
+  kill "$kpid" 2>/dev/null; wait "$kpid" 2>/dev/null
+  ADV=$(jq -r .content "$ADV_OUT" 2>/dev/null)
+  case "$ADV" in (*"⬡"*|*"%"*) bad "overflow token must hide ctx: [$ADV]" ;; (*) ok "overflow token terminates safely" ;; esac
+else
+  wait "$kpid" 2>/dev/null
+  bad "overflow token renderer hung"
+fi
+
 # digit-bearing garbage startTime → elapsed hidden, not misparsed as epoch
 BADT=$(printf '{"tasks":[{"id":"x","name":"n","type":"t","startTime":"abc123xyz"}]}' \
   | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
 case "$BADT" in (*"⧖"*) bad "garbage startTime must hide elapsed: [$BADT]" ;; (*) ok "garbage startTime hides elapsed" ;; esac
+
+BADDATE=$(printf '{"tasks":[{"id":"x","name":"n","type":"t","startTime":"2026-02-31T00:00:00Z"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$BADDATE" in (*"⧖"*) bad "invalid calendar date must hide elapsed: [$BADDATE]" ;; (*) ok "invalid calendar date hides elapsed" ;; esac
 
 # a crafted label must not smuggle escape sequences into the terminal
 INJ=$(printf '{"tasks":[{"id":"x","type":"local_agent","label":"A\\u001b[2JB"}]}' \

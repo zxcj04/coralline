@@ -1291,24 +1291,36 @@ THEMES
 
 settings_merge() {  # apply jq filter $1 (plus any --arg pairs after it) to settings.json
   # One shared pipeline for every settings.json write: timestamped backup, merge
-  # into a temp file, die-with-backup-path if the existing file doesn't parse,
-  # atomic mv. A missing file starts from null (jq -n), so assignment filters
-  # create it and callers that must not create anything guard before calling.
-  local filter="$1" tmp backup ; shift
+  # into a sibling temp file, fail loud on every write error, atomic rename.
+  # A missing file starts from null (jq -n); delete callers guard before calling.
+  local filter="$1" dir tmp backup stamp n=0 ; shift
   command -v jq >/dev/null 2>&1 || die "jq is required to merge Claude settings"
-  mkdir -p "$(dirname "$SETTINGS_FILE")"
-  tmp=$(mktemp "${TMPDIR:-/tmp}/coralline-settings.XXXXXX") || exit 1
+  dir=$(dirname "$SETTINGS_FILE")
+  mkdir -p "$dir" || die "could not create settings directory $dir"
+  tmp=$(mktemp "$dir/.coralline-settings.XXXXXX") \
+    || die "could not create a temporary settings file in $dir"
   if [ -f "$SETTINGS_FILE" ]; then
-    backup="$SETTINGS_FILE.bak.$(date +%Y%m%d%H%M%S)"
-    cp "$SETTINGS_FILE" "$backup"
+    stamp=$(date +%Y%m%d%H%M%S)
+    backup="$SETTINGS_FILE.bak.$stamp"
+    while [ -e "$backup" ]; do
+      n=$((n + 1)); backup="$SETTINGS_FILE.bak.$stamp.$n"
+    done
+    if ! cp "$SETTINGS_FILE" "$backup"; then
+      rm -f "$backup" "$tmp"
+      die "could not back up $SETTINGS_FILE; original left unchanged"
+    fi
     if ! jq "$@" "$filter" "$SETTINGS_FILE" > "$tmp"; then
       rm -f "$tmp"
       die "failed to parse $SETTINGS_FILE; original left unchanged, backup written to $backup"
     fi
-  else
-    jq -n "$@" "$filter" > "$tmp" || { rm -f "$tmp"; exit 1; }
+  elif ! jq -n "$@" "$filter" > "$tmp"; then
+    rm -f "$tmp"
+    die "failed to create $SETTINGS_FILE"
   fi
-  mv "$tmp" "$SETTINGS_FILE"
+  if ! mv "$tmp" "$SETTINGS_FILE"; then
+    rm -f "$tmp"
+    die "could not replace $SETTINGS_FILE; original left unchanged${backup:+, backup written to $backup}"
+  fi
 }
 
 update_settings() {
@@ -1319,7 +1331,14 @@ update_settings() {
 
 subagent_enabled() {  # exit 0 when settings.json registers the subagent renderer
   [ -f "$SETTINGS_FILE" ] || return 1
-  jq -e '.subagentStatusLine' "$SETTINGS_FILE" >/dev/null 2>&1
+  jq -e '
+    .subagentStatusLine as $s |
+    if ($s | type) != "object" then false
+    elif $s.type != "command" then false
+    elif ($s.command | type) != "string" then false
+    else ($s.command | endswith(" --subagent"))
+    end
+  ' "$SETTINGS_FILE" >/dev/null 2>&1
 }
 
 enable_subagent_statusline() {
