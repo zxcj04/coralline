@@ -1329,8 +1329,10 @@ settings_merge() {  # apply jq filter $1 (plus any --arg pairs after it) to sett
 }
 
 update_settings() {
+  local command
+  printf -v command 'bash %q' "$TARGET_DIR/statusline.sh"
   settings_merge '.statusLine = {"type": "command", "command": $command, "refreshInterval": 1}' \
-    --arg command "bash $TARGET_DIR/statusline.sh"
+    --arg command "$command"
   printf 'Updated %s\n' "$SETTINGS_FILE"
 }
 
@@ -1349,13 +1351,15 @@ subagent_enabled() {  # exit 0 when settings.json registers the subagent rendere
 enable_subagent_statusline() {
   # No refreshInterval here: Claude Code documents it for statusLine only;
   # subagentStatusLine re-renders on panel events.
+  local command
+  printf -v command 'bash %q --subagent' "$TARGET_DIR/statusline.sh"
   settings_merge '.subagentStatusLine = {"type": "command", "command": $command}' \
-    --arg command "bash $TARGET_DIR/statusline.sh --subagent"
+    --arg command "$command"
   printf 'Updated %s (subagent panel rows enabled)\n' "$SETTINGS_FILE"
 }
 
 disable_subagent_statusline() {
-  [ -f "$SETTINGS_FILE" ] || return 0
+  [ -s "$SETTINGS_FILE" ] || return 0
   settings_merge 'del(.subagentStatusLine)'
   printf 'Updated %s (subagent panel rows disabled)\n' "$SETTINGS_FILE"
 }

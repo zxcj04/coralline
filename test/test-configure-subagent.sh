@@ -74,6 +74,14 @@ jq -e '.subagentStatusLine.command | endswith("--subagent")' "$EMPTYFILE" >/dev/
   && ok "zero-byte settings creates entry" || bad "zero-byte settings creates entry"
 set -- "$EMPTYFILE".bak.*
 [ -f "$1" ] && [ ! -s "$1" ] && ok "zero-byte settings backup preserved" || bad "zero-byte settings backup preserved"
+
+EMPTYOFF="$EMPTYD/disabled.json"
+: > "$EMPTYOFF"
+SETTINGS_FILE="$EMPTYOFF"
+disable_subagent_statusline >/dev/null 2>&1
+[ ! -s "$EMPTYOFF" ] && ok "zero-byte settings is already disabled" || bad "zero-byte disable changed settings"
+set -- "$EMPTYOFF".bak.*
+[ ! -e "$1" ] && ok "zero-byte disable skips backup" || bad "zero-byte disable wrote backup"
 SETTINGS_FILE="$MAIN_SETTINGS"
 
 # (3b) backup and replacement failures stop before callers can report success
@@ -129,6 +137,23 @@ jq -e '.statusLine.type == "command" and .statusLine.refreshInterval == 1' \
 enable_subagent_statusline >/dev/null
 jq -e '.statusLine.refreshInterval == 1 and .subagentStatusLine.type == "command"' \
   "$SETTINGS_FILE" >/dev/null && ok "both keys coexist via shared helper" || bad "both keys coexist via shared helper"
+
+# (4a) generated shell commands quote an install path containing spaces
+SPACE_DIR="$TMPD/install with spaces"; mkdir -p "$SPACE_DIR"
+cp "$HERE/../statusline.sh" "$SPACE_DIR/statusline.sh"
+SPACE_SETTINGS="$TMPD/space-settings.json"
+TARGET_DIR="$SPACE_DIR"; SETTINGS_FILE="$SPACE_SETTINGS"
+update_settings >/dev/null
+MAIN_COMMAND=$(jq -r '.statusLine.command' "$SPACE_SETTINGS")
+MAIN_RENDER=$(CORALLINE_CONFIG=/dev/null bash -c "$MAIN_COMMAND" < "$HERE/sample-input.json")
+[ -n "$MAIN_RENDER" ] && ok "statusLine command quotes spaced path" || bad "statusLine command quotes spaced path"
+enable_subagent_statusline >/dev/null
+SUB_COMMAND=$(jq -r '.subagentStatusLine.command' "$SPACE_SETTINGS")
+SUB_RENDER=$(printf '%s\n' '{"tasks":[{"id":"space","type":"local_agent","label":"space path"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash -c "$SUB_COMMAND")
+printf '%s\n' "$SUB_RENDER" | jq -e '.id == "space"' >/dev/null 2>&1 \
+  && ok "subagent command quotes spaced path" || bad "subagent command quotes spaced path"
+TARGET_DIR="$HOME/.claude/coralline"; SETTINGS_FILE="$MAIN_SETTINGS"
 
 # (4b) the non-interactive flag drives the same toggle (AI-install path)
 rm -f "$SETTINGS_FILE" "$SETTINGS_FILE".bak.*
