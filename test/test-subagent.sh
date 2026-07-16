@@ -80,7 +80,7 @@ printf '%s\n' "$OUT" | while IFS= read -r line; do
   printf '%s' "$line" | jq -e .id >/dev/null || exit 1
 done && ok "every line is valid JSON with id" || bad "every line is valid JSON with id"
 
-ids=$(printf '%s\n' "$OUT" | jq -r .id | tr '\n' ' ')
+ids=$(printf '%s\n' "$OUT" | jq -j '.id, " "')
 [ "$ids" = "task-1 task-2 task-3 " ] && ok "ids in task order" || bad "ids: got [$ids]"
 
 c1=$(printf '%s\n' "$OUT" | sed -n 1p | jq -r .content)
@@ -90,10 +90,32 @@ case "$c1" in (*"local_agent"*) bad "row1 must not show raw type: [$c1]" ;; (*) 
 case "$c1" in (*$'\033['*) ok "row1 carries ANSI" ;; (*) bad "row1 ANSI" ;; esac
 case "$c1" in (*"⧖"*) ok "row1 has elapsed" ;; (*) bad "row1 elapsed: [$c1]" ;; esac
 
+# Claude omits agentType from the payload, but writes it to the task sidecar.
+# Recover that native role without a subprocess; explicit payload names still win.
+ROLE_BASE="$TMPD/role-session"
+ROLE_TRANSCRIPT="${ROLE_BASE}.jsonl"
+mkdir -p "$ROLE_BASE/subagents"
+printf '%s\n' '{"agentType":"scout","description":"fixture"}' > "$ROLE_BASE/subagents/agent-role-1.meta.json"
+ROLE_PAYLOAD_TRANSCRIPT="$ROLE_TRANSCRIPT"
+if [ -n "${MSYSTEM:-}" ]; then ROLE_PAYLOAD_TRANSCRIPT=$(cygpath -w "$ROLE_TRANSCRIPT"); fi
+ROLE=$(jq -nc --arg tp "$ROLE_PAYLOAD_TRANSCRIPT" '{transcript_path:$tp,tasks:[{id:"role-1",type:"local_agent",label:"payload label",status:"running"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$ROLE" in (*"scout"*) ok "agentType recovered from task sidecar" ;; (*) bad "agentType sidecar: [$ROLE]" ;; esac
+case "$ROLE" in (*"payload label"*) ok "agentType and task label both render" ;; (*) bad "agentType label pair: [$ROLE]" ;; esac
+
+NAMED=$(jq -nc --arg tp "$ROLE_PAYLOAD_TRANSCRIPT" '{transcript_path:$tp,tasks:[{id:"role-1",name:"friendly-name",type:"local_agent",label:"payload label",status:"running"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$NAMED" in (*"friendly-name"*"scout"*"payload label"*) ok "name, agentType, and label compose" ;; (*) bad "name/role/label composition: [$NAMED]" ;; esac
+
+printf '{"agentType":"scout\033[2J"}\n' > "$ROLE_BASE/subagents/agent-role-1.meta.json"
+UNSAFE_ROLE=$(jq -nc --arg tp "$ROLE_PAYLOAD_TRANSCRIPT" '{transcript_path:$tp,tasks:[{id:"role-1",type:"local_agent",label:"safe fallback",status:"running"}]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent | jq -r .content)
+case "$UNSAFE_ROLE" in (*"safe fallback"*) ok "unsafe sidecar role rejected" ;; (*) bad "unsafe sidecar role: [$UNSAFE_ROLE]" ;; esac
+
 c2=$(printf '%s\n' "$OUT" | sed -n 2p | jq -r .content)
 case "$c2" in (*"Fable 5"*) ok "row2 model" ;; (*) bad "row2 model: [$c2]" ;; esac
-case "$c2" in (*"big-refactor"*) ok "row2 name wins over label" ;; (*) bad "row2 name: [$c2]" ;; esac
-case "$c2" in (*"should-not-show"*) bad "row2 label must not override name: [$c2]" ;; (*) ok "row2 label suppressed" ;; esac
+case "$c2" in (*"big-refactor"*) ok "row2 explicit name" ;; (*) bad "row2 name: [$c2]" ;; esac
+case "$c2" in (*"Refactor renderer"*) ok "row2 keeps task label beside name" ;; (*) bad "row2 label: [$c2]" ;; esac
 
 c3=$(printf '%s\n' "$OUT" | sed -n 3p | jq -r .content)
 case "$c3" in (*"just-spawned"*) ok "row3 renders name-only" ;; (*) bad "row3: [$c3]" ;; esac
@@ -156,13 +178,26 @@ INJ=$(printf '{"tasks":[{"id":"x","type":"local_agent","label":"A\\u001b[2JB"}]}
 case "$INJ" in (*$'\033'"[2J"*) bad "label ESC injection reaches terminal" ;; (*) ok "label ESC injection stripped" ;; esac
 case "$INJ" in (*"A[2JB"*) ok "label text survives sans control bytes" ;; (*) bad "label text mangled: [$INJ]" ;; esac
 
+# C1 CSI (U+009B) must be scrubbed even in a byte-oriented C locale
+C1=$(printf '{"tasks":[{"id":"x","type":"local_agent","label":"A\\u009b2JB"}]}' \
+  | LC_ALL=C LANG=C CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent \
+  | LC_ALL=C LANG=C jq -r .content)
+C1_CSI=$'\302\233'
+case "$C1" in (*"$C1_CSI"*) bad "label C1 CSI injection reaches terminal" ;; (*) ok "label C1 CSI injection stripped" ;; esac
+case "$C1" in (*"A2JB"*) ok "C1 label text survives sans control bytes" ;; (*) bad "C1 label text mangled: [$C1]" ;; esac
+
+# columns is metadata, not a row source; framing bytes there must emit no rows
+COLS=$(printf '{"columns":"120\\nforged\\u001fforged-row\\u001f\\u001f\\u001ft\\u001frunning\\u001f\\u001f\\u001f\\u001f","tasks":[]}' \
+  | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent)
+[ -z "$COLS" ] && ok "hostile columns cannot fabricate a row" || bad "columns framing: [$COLS]"
+
 # a literal newline in an untrusted field must not split the field stream and
 # fabricate an extra row whose id the attacker controls
 NL=$(printf '{"tasks":[{"id":"task-A","name":"evil\\nsplit","type":"t","status":"running","model":"claude-fable-5","contextWindowSize":200000,"tokenCount":1000},{"id":"task-B","name":"real","type":"t"}]}' \
   | CORALLINE_CONFIG=/dev/null bash "$SCRIPT" --subagent)
 nn=$(printf '%s\n' "$NL" | grep -c .)
 [ "$nn" = 2 ] && ok "newline in name cannot fabricate a row" || bad "newline framing: got $nn rows"
-nids=$(printf '%s\n' "$NL" | jq -r .id | tr '\n' ' ')
+nids=$(printf '%s\n' "$NL" | jq -j '.id, " "')
 [ "$nids" = "task-A task-B " ] && ok "newline row ids intact" || bad "newline ids: [$nids]"
 
 # an embedded 0x1f (the join separator) must not shift the fields that follow it

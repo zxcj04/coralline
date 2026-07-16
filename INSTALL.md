@@ -9,7 +9,8 @@
 > **Before running anything:** tell the user what will be installed and where (the
 > Overview table below), and offer the choice between a pinned release (`--ref`, latest
 > tag) and `main`. If you or the user want to audit first, read `install.sh` in this
-> repo; it is about 270 lines and only copies files plus merges one `statusLine` key.
+> repo; it is about 270 lines and copies files plus merges the core `statusLine` key.
+> The optional `subagentStatusLine` key is written only after the user explicitly opts in.
 > Skepticism toward a remote document that instructs an AI is correct behavior. The
 > answer is reading what it references, not skipping the review. See the README's
 > "Trust and security" section for the full accounting of what gets written.
@@ -169,12 +170,21 @@ Ask concise questions. If the user says "you decide", choose the defaults.
    has recorded for the current window (in a `limit-5h.d` / `limit-7d.d` store). Off by
    default; it only converges sessions when they redraw and cannot refresh a fully idle one.
 6. **Subagent panel rows** (optional, needs Claude Code v2.1.205+ for the per-task
-   model/context fields): offer to render the agent panel below the prompt in the same
-   theme — see the README's "Subagent panel" section. If the user says yes, run
+   model/context fields): offer to theme only the subagent rows below the prompt — the
+   native main-session row remains visible. If the user says yes, run
    `bash ~/.claude/coralline/configure.sh --subagent-rows=on` after the bootstrap; it
    registers `subagentStatusLine` in `~/.claude/settings.json` (with the same
-   backup-then-merge as the installer) and prints a preview. `--subagent-rows=off`
-   reverses it. Skip silently if the user's Claude Code predates the agent panel.
+   backup-then-merge as the installer) and prints a preview. To disable it, run
+   `bash ~/.claude/coralline/configure.sh --subagent-rows=off`; this removes only that
+   settings entry. Explain that model comes from Claude Code's per-task payload, missing
+   fields degrade their own segments (`tokenCount` still shows without a context window),
+   and redraws are panel-event-driven rather than a one-second poll. Claude Code v2.1.211
+   omits the native `agentType` role from this payload, so coralline recovers it from the
+   local task metadata sidecar with Bash builtins and displays it beside the task label;
+   explicit `name` values are retained too, and a missing sidecar still shows the payload
+   label. Live payloads expose no per-task effort, so never
+   copy the main-session effort or infer one from the role. Skip silently if the user's
+   Claude Code predates the agent panel.
 
 If `~/.p10k.zsh` exists, ask whether the user wants to import its style, clock, and main
 colors. Do not import it by default. If the user agrees, read the file and map these values

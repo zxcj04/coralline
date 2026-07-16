@@ -951,8 +951,33 @@ sub_epoch() {  # → _EP ; strict startTime parser for the per-task loop.
   esac
 }
 
-subseg_name() {  # display name (name → label → description → type), by status
-  local label="${t_name:-${t_label:-${t_desc:-$t_type}}}" col
+subagent_role() {  # → _SUB_ROLE ; $1=transcript path $2=task id
+  local transcript="$1" id="$2" path line role
+  _SUB_ROLE=""
+  case "$id" in (''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-]*) return 1 ;; esac
+  case "$transcript" in (*.jsonl) path="${transcript%.jsonl}/subagents/agent-${id}.meta.json" ;; (*) return 1 ;; esac
+  path="${path//\\//}"  # native Windows payload paths use backslashes; Git Bash accepts C:/...
+  [ -r "$path" ] || return 1
+  IFS= read -r line < "$path" || [ -n "$line" ] || return 1
+  case "$line" in
+    (*'"agentType":"'*) role="${line#*\"agentType\":\"}" ; role="${role%%\"*}" ;;
+    (*) return 1 ;;
+  esac
+  case "$role" in (''|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-]*) return 1 ;; esac
+  _SUB_ROLE="$role"
+}
+
+subseg_name() {  # identity + task label; each falls back independently
+  local identity="${t_name:-${t_role:-}}" detail="${t_label:-${t_desc:-}}" label col
+  if [ -n "${t_name:-}" ] && [ -n "${t_role:-}" ] && [ "$t_name" != "$t_role" ]; then
+    identity="$t_name ($t_role)"
+  fi
+  if [ -n "$identity" ]; then
+    label="$identity"
+    [ -n "$detail" ] && [ "$detail" != "${t_name:-}" ] && [ "$detail" != "${t_role:-}" ] && label="$label · $detail"
+  else
+    label="${detail:-$t_type}"
+  fi
   [ -n "$label" ] || return 0
   case "$t_status" in
     (running|in_progress|active) col="$VL_FG_TEXT" ;;
@@ -1082,8 +1107,8 @@ if [ "$SUBAGENT_MODE" = "1" ]; then
   # is never read, so force non-auto layout — push() then skips its
   # per-character width scan for every panel segment.
   VL_LAYOUT=fixed
-  # scrub drops every control byte (0x00-0x1f + DEL) from every extracted
-  # field BEFORE the stream below is framed with newlines and unit separators.
+  # scrub drops C0, DEL, and C1 control characters from every extracted field
+  # BEFORE the stream below is framed with newlines and unit separators.
   # That one pass is both the security scrub — a crafted label could otherwise
   # smuggle terminal escapes (ESC[2J confirmed live) into the rendered row —
   # and the framing guard: a literal newline or 0x1f inside a field would
@@ -1097,10 +1122,11 @@ if [ "$SUBAGENT_MODE" = "1" ]; then
   # just the last document — otherwise stale rows (and duplicate ids) would
   # precede the fresh ones.
   SUB_LINES=$(printf '%s' "$input" | jq -rs '
-    def scrub: tostring | gsub("[\\x00-\\x1f\\x7f]"; "");
+    def scrub: tostring | gsub("[\\x00-\\x1f\\x7f\u0080-\u009f]"; "");
     (last // {}) as $d |
-    ($d.columns // 0 | tostring),
     ($d.tasks[]? | [
+      "task",
+      ($d.transcript_path // ""),
       (.id // ""),
       (.name // ""),
       (.label // ""),
@@ -1112,13 +1138,12 @@ if [ "$SUBAGENT_MODE" = "1" ]; then
       (.contextWindowSize // ""),
       (.tokenCount // "")
     ] | map(scrub) | join("\u001f"))' 2>/dev/null)
-  sub_first=1
-  while IFS=$'\037' read -r t_id t_name t_label t_desc t_type t_status t_start t_model t_cws t_tok; do
-    if [ "$sub_first" = "1" ]; then
-      SUB_COLUMNS="$t_id" ; sub_first=0   # line 1 = usable row width (reserved)
-      continue
-    fi
+  while IFS=$'\037' read -r sub_kind t_transcript t_id t_name t_label t_desc t_type t_status t_start t_model t_cws t_tok; do
+    [ "$sub_kind" = "task" ] || continue
+    t_tok="${t_tok%$'\r'}"  # native Windows jq writes CRLF; input CR was scrubbed above
     [ -n "$t_id" ] || continue
+    t_role=""
+    [ "$t_type" = "local_agent" ] && subagent_role "$t_transcript" "$t_id" && t_role="$_SUB_ROLE"
     SEG_BGS=() ; SEG_TXT=() ; SEG_LEN=()
     for s in $VL_SUB_SEGMENTS; do
       command -v "subseg_$s" >/dev/null 2>&1 && "subseg_$s"

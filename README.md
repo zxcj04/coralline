@@ -38,34 +38,58 @@ Gauges change color as they fill: green → yellow at 50% → red at 75% (thresh
 ## Subagent panel
 
 Claude Code shows an agent panel below the prompt while subagents run; each row
-defaults to `name · description · token count`. coralline can render those rows
-in your theme instead — agent name, **per-task model**, a context gauge, and
-elapsed time:
+defaults to `name · description · token count`. coralline can theme the
+**subagent rows** and add the per-task model, a context gauge, and elapsed time:
 
 ```text
- Explore ◆ Haiku 4.5 ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
- executor ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
+ scout · Explore config sources ◆ gpt-5.6-luna ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
+ executor · Apply R2 fixes ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
 ```
 
-Opt in from the setup flow (`bash ~/.claude/coralline/configure.sh`): answer `y`
-to *Render subagent panel rows*. This registers `subagentStatusLine` in
-`~/.claude/settings.json` pointing at `statusline.sh --subagent`; answering `n`
-later removes it again.
+Claude Code v2.1.211 does not include its internal `agentType` role in the
+`subagentStatusLine` payload, but local Agent tasks have a small metadata
+sidecar next to the session transcript. coralline reads that file with Bash
+builtins, so roles such as `scout` and `executor` return without another
+process. The row keeps both identity and task label: an explicit per-task
+`name` is retained alongside the role when both exist, followed by `label` or
+`description`. If the sidecar is absent or unreadable, the payload fields still
+render normally.
 
-Per-task `model`/`contextWindowSize` need Claude Code **v2.1.205+**; on older
-versions (or before a task's model resolves) rows degrade gracefully — the
-missing pieces are simply omitted. Per-subagent *effort* is not shown because
-Claude Code does not expose it per task, and the panel's **main-session row is
-drawn by Claude Code itself** — it is not part of the `subagentStatusLine`
-protocol, so coralline cannot theme it.
+The model comes directly from Claude Code's per-task `model` payload field;
+coralline never infers it from the main-session model or the agent role. Known
+Claude IDs are shortened (`claude-haiku-4-5-…` → `Haiku 4.5`), while unknown or
+gateway IDs such as `gpt-5.6-luna` are shown verbatim.
+
+Enable or disable the renderer directly:
+
+```bash
+bash ~/.claude/coralline/configure.sh --subagent-rows=on
+bash ~/.claude/coralline/configure.sh --subagent-rows=off
+```
+
+The setup wizard offers the same toggle. Disabling removes only the
+`subagentStatusLine` entry and preserves every other Claude setting.
+
+Per-task `model` and `contextWindowSize` need Claude Code **v2.1.205+**. Missing
+fields degrade one segment at a time: no model hides only the model segment;
+`tokenCount` still renders as a bare count without `contextWindowSize`; and the
+rest of the row remains themed. Refresh is panel-event-driven rather than a
+fixed one-second poll, so elapsed time changes when Claude Code redraws the
+panel.
+
+Live payloads currently expose no per-task *effort*. coralline does not reuse
+the main-session effort or guess from the role; effort can be added only if
+Claude Code exposes it later. The panel's native **main-session row remains
+visible** because it is outside the `subagentStatusLine` protocol; only the
+subagent rows are replaced and themed.
 
 `VL_SUB_SEGMENTS` (default `"name model ctx elapsed"`) picks and orders the row
 segments. These four are the complete set:
 
 | Segment | Shows | Hidden when |
 |---|---|---|
-| `name` | task name (first of `name` / `label` / `description` / `type`), colored by status — running: text color, completed: ok, failed: hot, missing/unknown: dim | all four fields empty |
-| `model` | `◆` short model name (`claude-haiku-4-5-…` → `Haiku 4.5`; unknown IDs shown verbatim) | model not resolved yet, or pre-v2.1.205 |
+| `name` | task identity plus task label: explicit `name` and sidecar `agentType` compose when both exist, followed by payload `label` or `description`; `type` is the final fallback; colored by status — running: text color, completed: ok, failed: hot, missing/unknown: dim | every source is empty or unavailable |
+| `model` | `◆` model from Claude Code's per-task payload; known Claude IDs are shortened and unknown/gateway IDs are shown verbatim | model not resolved yet, or pre-v2.1.205 |
 | `ctx` | `⬡` context gauge + token count; bare count without `contextWindowSize` | no `tokenCount` |
 | `elapsed` | `⧖` wall-clock since `startTime` (epoch s/ms or UTC ISO) | `startTime` missing or unparseable |
 
@@ -187,19 +211,22 @@ like, so a Claude that red-flags it before proceeding is behaving correctly. The
 that skepticism is inspection, not trust:
 
 - **Read what runs.** Everything is in this repo: [install.sh](./install.sh) (about 270
-  lines) copies files and merges one `statusLine` key into `settings.json`, and
-  [INSTALL.md](./INSTALL.md) is the playbook the AI follows. Have your Claude read both
-  before approving anything; that is the intended flow.
+  lines) copies files and merges the core `statusLine` key into `settings.json`; the optional
+  `subagentStatusLine` key is written only after an explicit yes. [INSTALL.md](./INSTALL.md)
+  is the playbook the AI follows. Have your Claude read both before approving anything; that
+  is the intended flow.
 - **Pin a release.** `... | bash -s -- --ref v0.9.1` installs a tagged release instead of
   `main`, so what you audited is what you run. The interactive installer already offers the
   latest tag by default.
 - **What gets written, exactly:** files under `~/.claude/coralline/`, your choices in
-  `~/.claude/coralline.conf`, and one `statusLine` entry merged into
-  `~/.claude/settings.json` (a timestamped `settings.json.bak.*` backup is created first).
-  Nothing else.
+  `~/.claude/coralline.conf`, and the core `statusLine` entry in
+  `~/.claude/settings.json`. If you explicitly enable themed subagent rows, coralline also
+  writes `subagentStatusLine`. A timestamped `settings.json.bak.*` backup is created before
+  either merge; no other Claude settings are changed.
 - **What runs afterwards:** `statusline.sh` renders on every prompt. It is pure bash and
-  makes zero network requests at runtime; the only external commands are one `jq` call and
-  one `git` call per render. Your prompts, keys, and usage data never leave the machine.
+  makes zero network requests at runtime. A main render uses one `jq` and at most one `git`;
+  a subagent-panel render uses one `jq`, no `git`, and Bash builtins for local role metadata.
+  Your prompts, keys, and usage data never leave the machine.
 - **Why INSTALL.md addresses the AI:** humans get the visual wizard, AIs get an interview
   script, so the playbook speaks to the reader that executes it. A document that opens by
   addressing your AI deserves scrutiny, which is why every artifact it references lives in
@@ -207,12 +234,15 @@ that skepticism is inspection, not trust:
 
 ### Uninstall
 
+If you enabled themed subagent rows, remove their settings entry before deleting the tools:
+
 ```bash
+bash ~/.claude/coralline/configure.sh --subagent-rows=off
 rm -rf ~/.claude/coralline ~/.claude/coralline.conf
 ```
 
 Then delete the `statusLine` block from `~/.claude/settings.json` (or restore the newest
-`settings.json.bak.*`). Nothing else is left behind.
+`settings.json.bak.*`). If you skipped the first command, also delete `subagentStatusLine`.
 
 ## Setup
 

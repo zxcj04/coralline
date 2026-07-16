@@ -37,49 +37,73 @@
 
 ## Subagent 面板
 
-Claude Code 在 subagent 執行時會於 prompt 下方顯示 agent 面板;每列預設是
-`name · description · token count`。coralline 可以改用你的主題渲染這些列——
-agent 名稱、**該 task 的 model**、context 用量條與執行時間:
+Claude Code 在 subagent 執行時會於 prompt 下方顯示 agent 面板；每列預設為
+`name · description · token count`。coralline 可以為其中的 **subagent 列**
+套用主題，並加入該 task 的 model、context 用量條與執行時間：
 
 ```text
- Explore ◆ Haiku 4.5 ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
- executor ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
+ scout · Explore config sources ◆ gpt-5.6-luna ⬡ ▰▰▱▱▱ 21% 42.0k ⧖ 2m
+ executor · Apply R2 fixes ◆ Fable 5 ⬡ ▰▰▰▱▱ 78% 155.0k ⧖ 45s
 ```
 
-在設定流程(`bash ~/.claude/coralline/configure.sh`)中對 *Render subagent
-panel rows* 回答 `y` 即可啟用;這會在 `~/.claude/settings.json` 註冊
-`subagentStatusLine` 指向 `statusline.sh --subagent`,之後回答 `n` 可移除。
+Claude Code v2.1.211 沒有把內部的 `agentType` role 放進
+`subagentStatusLine` payload，但本機 Agent task 會在 session transcript
+旁留下小型 metadata sidecar。coralline 以 Bash builtin 直接讀取，不會增加
+process，因此可恢復 `scout`、`executor` 等 role。列上會同時保留 identity
+與 task label：若另有明確的 per-task `name`，會和 role 一起顯示，後面再接
+`label` 或 `description`。sidecar 不存在或無法讀取時，payload 原有欄位仍會
+正常顯示。
 
-每列的 `model`/`contextWindowSize` 需要 Claude Code **v2.1.205+**;舊版(或
-task 的 model 尚未確定時)會優雅降級——缺什麼就省略什麼。per-subagent 的
-*effort* 因 Claude Code 未提供該欄位而不顯示;另外面板中的 **main(主 session)
-那一列由 Claude Code 自行繪製**,不經過 `subagentStatusLine` 協定,coralline
-無法為它套主題。
+model 直接取自 Claude Code 傳入的 per-task `model` 欄位；coralline 不會從
+主 session model 或 agent role 推測。已知的 Claude ID 會縮短顯示
+（`claude-haiku-4-5-…` → `Haiku 4.5`），不認得的 ID 或 gateway ID（例如
+`gpt-5.6-luna`）則原樣顯示。
 
-`VL_SUB_SEGMENTS`(預設 `"name model ctx elapsed"`)決定列的內容與順序,可用
-的 segment 就是以下四個:
+可直接使用以下指令啟用或停用：
+
+```bash
+bash ~/.claude/coralline/configure.sh --subagent-rows=on
+bash ~/.claude/coralline/configure.sh --subagent-rows=off
+```
+
+設定 wizard 提供相同的開關。停用時只會移除 `subagentStatusLine`，其他 Claude
+設定都會保留。
+
+每個 task 的 `model` 與 `contextWindowSize` 需要 Claude Code **v2.1.205+**。
+缺少欄位時會逐一降級：沒有 model 只會隱藏 model segment；沒有
+`contextWindowSize` 時，只要有 `tokenCount` 仍會顯示 token 數；其餘列內容
+仍由 coralline 套用主題。更新由 panel event 觸發，不是固定每秒輪詢，因此
+elapsed time 只會在 Claude Code 重繪面板時變動。
+
+目前 live payload 沒有提供 per-task *effort*。coralline 不會沿用主 session
+的 effort，也不會從 role 猜測；只有 Claude Code 未來新增欄位後才能支援。
+面板原生的 **main session 列仍會保留**，因為它不屬於
+`subagentStatusLine` 協定；coralline 只會取代並美化 subagent 列。
+
+`VL_SUB_SEGMENTS`（預設 `"name model ctx elapsed"`）決定列的內容與順序，
+可用的 segment 就是以下四個：
 
 | Segment | 顯示 | 隱藏條件 |
 |---|---|---|
-| `name` | task 名稱(依 `name` / `label` / `description` / `type` 優先序),顏色反映狀態——running:一般文字色、completed:ok、failed:hot、缺失/未知:dim | 四個欄位皆空 |
-| `model` | `◆` model 短名(`claude-haiku-4-5-…` → `Haiku 4.5`;不認得的 ID 原樣顯示) | model 尚未 resolve,或 v2.1.205 之前的版本 |
-| `ctx` | `⬡` context 用量條 + token 數;無 `contextWindowSize` 時只顯示 token 數 | 沒有 `tokenCount` |
-| `elapsed` | `⧖` 自 `startTime` 起的執行時間(epoch 秒/毫秒或 UTC ISO) | `startTime` 缺失或無法解析 |
+| `name` | task identity 加 task label：明確 `name` 與 sidecar `agentType` 同時存在時會組合顯示，後接 payload `label` 或 `description`，最後才以 `type` 退回；顏色反映狀態——running：一般文字色、completed：ok、failed：hot、缺失／未知：dim | 所有來源皆空或無法取得 |
+| `model` | `◆` Claude Code per-task payload 傳入的 model；已知 Claude ID 會縮短，不認得的 ID 或 gateway ID 原樣顯示 | model 尚未 resolve，或 v2.1.205 之前的版本 |
+| `ctx` | `⬡` context 用量條 + token 數；無 `contextWindowSize` 時只顯示 token 數 | 沒有 `tokenCount` |
+| `elapsed` | `⧖` 自 `startTime` 起的執行時間（epoch 秒／毫秒或 UTC ISO） | `startTime` 缺失或無法解析 |
 
-subagent renderer 與主列共用同一份 config,但只讀取與「單列外觀」有關的參數:
-`VL_STYLE` 及各 style 自己的參數——pill 的圓角與分隔(`VL_CAP_L`、`VL_CAP_R`、
-`VL_SEP`)、lean/classic 家族(`VL_LEAN_SEP`、`VL_LEAN_BG`、
-`VL_LEAN_CAP_L`/`VL_LEAN_CAP_R`、`VL_LEAN_FG`、`VL_BG_BAR`)——`VL_ASCII`、
-`VL_NAME_MAX`(建議設定——面板 label 通常很長,列過寬時 Claude Code 從右側裁切,
-最先消失的就是 model/ctx)、用量條參數(`VL_BAR_WIDTH`、`VL_BAR_FILL`、
-`VL_BAR_EMPTY`、`VL_WARN_PCT`、`VL_HOT_PCT`)、共用色盤(`VL_FG_TEXT`、
-`VL_FG_DIM`、`VL_FG_OK`、`VL_FG_WARN`、`VL_FG_HOT`),以及列顏色
+subagent renderer 與主列共用同一份 config，但只讀取與「單列外觀」有關的參數：
+`VL_STYLE` 及各 style 自己的參數——pill 的圓角與分隔（`VL_CAP_L`、`VL_CAP_R`、
+`VL_SEP`）、lean/classic 家族（`VL_LEAN_SEP`、`VL_LEAN_BG`、
+`VL_LEAN_CAP_L`/`VL_LEAN_CAP_R`、`VL_LEAN_FG`、`VL_BG_BAR`）——`VL_ASCII`、
+`VL_NAME_MAX`（建議設定——面板 label 通常很長，列過寬時 Claude Code 從右側裁切，
+最先消失的就是 model/ctx）、用量條參數（`VL_BAR_WIDTH`、`VL_BAR_FILL`、
+`VL_BAR_EMPTY`、`VL_WARN_PCT`、`VL_HOT_PCT`）、共用色盤（`VL_FG_TEXT`、
+`VL_FG_DIM`、`VL_FG_OK`、`VL_FG_WARN`、`VL_FG_HOT`），以及列顏色
 `VL_BG_SUB_NAME` / `VL_BG_SUB_MODEL` / `VL_BG_SUB_CTX` / `VL_BG_SUB_ELAPSED`
-(留空 = 分別退回 `VL_BG_DIR` / `VL_BG_MODEL` / `VL_BG_CTX` /
-`VL_BG_DURATION`)。其餘參數——`VL_SEGMENTS*`、版面(`VL_LAYOUT`、
-`VL_MAX_LINES`、`VL_WRAP_MARGIN`)、clock、cost、lines、float、limit-sync、
-burn、git 與 runtime segments——都只作用於主列,在 subagent 模式一律忽略。
-想讓面板列使用與主列不同的主題,把註冊的 command 指向獨立 config 即可:
+（留空 = 分別退回 `VL_BG_DIR` / `VL_BG_MODEL` / `VL_BG_CTX` /
+`VL_BG_DURATION`）。其餘參數——`VL_SEGMENTS*`、版面（`VL_LAYOUT`、
+`VL_MAX_LINES`、`VL_WRAP_MARGIN`）、clock、cost、lines、float、limit-sync、
+burn、git 與 runtime segments——都只作用於主列，在 subagent 模式一律忽略。
+想讓面板列使用與主列不同的主題，把註冊的 command 指向獨立 config 即可：
 `CORALLINE_CONFIG=~/.claude/coralline-subagent.conf bash ~/.claude/coralline/statusline.sh --subagent`。
 
 ## 安裝
@@ -175,28 +199,35 @@ curl -fsSL https://raw.githubusercontent.com/Nanako0129/coralline/main/install.s
 如果先亮紅旗、要求檢查，那是它運作正常，不是故障。回應這種懷疑的方式是檢驗，不是信任：
 
 - **先讀會執行的東西。** 全部都在這個 repo 裡：[install.sh](./install.sh)（約 270 行）
-  只做複製檔案和合併一個 `statusLine` key 到 `settings.json`；[INSTALL.md](./INSTALL.md)
-  是 AI 遵循的 playbook。讓你的 Claude 先讀完這兩份再請求核可，這是預期流程。
+  只做複製檔案和把核心 `statusLine` key 合併進 `settings.json`；選用的
+  `subagentStatusLine` 只有在使用者明確同意後才會寫入。[INSTALL.md](./INSTALL.md) 是 AI
+  遵循的 playbook。讓你的 Claude 先讀完這兩份再請求核可，這是預期流程。
 - **釘選版本。** `... | bash -s -- --ref v0.9.1` 安裝打過 tag 的 release 而非 `main`，
   你審過的就是你跑的。互動式安裝本來就預設建議最新 tag。
 - **確切會寫入什麼：** `~/.claude/coralline/` 底下的檔案、你的選擇存在
-  `~/.claude/coralline.conf`、以及合併進 `~/.claude/settings.json` 的一個 `statusLine`
-  設定（合併前會先建立帶時間戳的 `settings.json.bak.*` 備份）。僅此而已。
+  `~/.claude/coralline.conf`，以及合併進 `~/.claude/settings.json` 的核心
+  `statusLine`。若你明確啟用 subagent 列主題，coralline 也會寫入
+  `subagentStatusLine`。每次合併前都會先建立帶時間戳的 `settings.json.bak.*` 備份；
+  其他 Claude 設定不會變動。
 - **裝完之後跑的是什麼：** `statusline.sh` 在每次 prompt 時渲染。純 bash、執行期零網路
-  請求；每次渲染唯一的外部指令是一個 `jq` 和一個 `git` 呼叫。你的對話、金鑰、用量資料
-  不會離開這台機器。
+  請求；主列每次渲染使用一個 `jq` 與最多一個 `git`，subagent 面板渲染則使用一個
+  `jq`、不呼叫 `git`，並以 Bash builtin 讀取本機 role metadata。你的對話、金鑰、用量
+  資料不會離開這台機器。
 - **INSTALL.md 為什麼對 AI 說話：** 人類走視覺化精靈、AI 走訪談腳本，所以 playbook 對
   「實際執行它的讀者」說話。一份開頭就對你的 AI 下指令的文件本來就該被檢視，這正是它
   引用的每個檔案都放在這個 repo、讓你們倆都能先讀的原因。
 
 ### 移除
 
+若曾啟用 subagent 列主題，請先移除對應設定，再刪除工具：
+
 ```bash
+bash ~/.claude/coralline/configure.sh --subagent-rows=off
 rm -rf ~/.claude/coralline ~/.claude/coralline.conf
 ```
 
 然後把 `~/.claude/settings.json` 裡的 `statusLine` 區塊刪掉（或還原最新的
-`settings.json.bak.*`）。不會留下其他任何東西。
+`settings.json.bak.*`）。若略過第一個指令，也要一併刪除 `subagentStatusLine`。
 
 ## 設定
 

@@ -1,5 +1,6 @@
 {
   "session_id": "test-session-abc",
+  "transcript_path": "/tmp/coralline-sample/test-session-abc.jsonl",
   "columns": 100,
   "tasks": [
     {
@@ -11,7 +12,7 @@
     },
     {
       "id": "task-2", "name": "big-refactor", "type": "local_agent",
-      "label": "should-not-show",
+      "label": "Refactor renderer",
       "status": "completed", "startTime": "2026-07-15T04:00:00Z",
       "model": "claude-fable-5",
       "contextWindowSize": 200000, "tokenCount": 155000
