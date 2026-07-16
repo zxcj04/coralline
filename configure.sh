@@ -1292,7 +1292,7 @@ THEMES
 settings_merge() {  # apply jq filter $1 (plus any --arg pairs after it) to settings.json
   # One shared pipeline for every settings.json write: timestamped backup, merge
   # into a sibling temp file, fail loud on every write error, atomic rename.
-  # A missing file starts from null (jq -n); delete callers guard before calling.
+  # A missing or zero-byte file starts from null (jq -n); delete callers guard before calling.
   local filter="$1" dir tmp backup stamp n=0 ; shift
   command -v jq >/dev/null 2>&1 || die "jq is required to merge Claude settings"
   dir=$(dirname "$SETTINGS_FILE")
@@ -1309,11 +1309,16 @@ settings_merge() {  # apply jq filter $1 (plus any --arg pairs after it) to sett
       rm -f "$backup" "$tmp"
       die "could not back up $SETTINGS_FILE; original left unchanged"
     fi
-    if ! jq "$@" "$filter" "$SETTINGS_FILE" > "$tmp"; then
+    if [ ! -s "$SETTINGS_FILE" ]; then
+      jq -ne "$@" "$filter" > "$tmp" || {
+        rm -f "$tmp"
+        die "failed to create settings from empty $SETTINGS_FILE; original left unchanged, backup written to $backup"
+      }
+    elif ! jq -e "$@" "$filter" "$SETTINGS_FILE" > "$tmp"; then
       rm -f "$tmp"
       die "failed to parse $SETTINGS_FILE; original left unchanged, backup written to $backup"
     fi
-  elif ! jq -n "$@" "$filter" > "$tmp"; then
+  elif ! jq -ne "$@" "$filter" > "$tmp"; then
     rm -f "$tmp"
     die "failed to create $SETTINGS_FILE"
   fi

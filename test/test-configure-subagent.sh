@@ -65,6 +65,17 @@ printf '{broken' > "$SETTINGS_FILE"
 ( enable_subagent_statusline ) >/dev/null 2>&1 && bad "broken json dies" || ok "broken json dies"
 [ "$(cat "$SETTINGS_FILE")" = "{broken" ] && ok "original untouched on failure" || bad "original untouched on failure"
 
+# (3a) an existing zero-byte file starts from an empty object, not empty jq output
+EMPTYD="$TMPD/empty"; mkdir -p "$EMPTYD"; EMPTYFILE="$EMPTYD/settings.json"
+: > "$EMPTYFILE"
+SETTINGS_FILE="$EMPTYFILE"
+enable_subagent_statusline >/dev/null
+jq -e '.subagentStatusLine.command | endswith("--subagent")' "$EMPTYFILE" >/dev/null 2>&1 \
+  && ok "zero-byte settings creates entry" || bad "zero-byte settings creates entry"
+set -- "$EMPTYFILE".bak.*
+[ -f "$1" ] && [ ! -s "$1" ] && ok "zero-byte settings backup preserved" || bad "zero-byte settings backup preserved"
+SETTINGS_FILE="$MAIN_SETTINGS"
+
 # (3b) backup and replacement failures stop before callers can report success
 CPD="$TMPD/cp-fail"; mkdir -p "$CPD"; CPFILE="$CPD/settings.json"
 printf '{"original":1}\n' > "$CPFILE"
